@@ -36,13 +36,13 @@ static const u32 region_ids[] = {
 typedef enum {
     RANK_PLAYTIME,   /* "Top Playtime"  — total_secs descending      */
     RANK_LAUNCHES,   /* "Top Launches"  — launch_count descending    */
-    RANK_SESSIONS,   /* "Top Sessions"  — session count descending   */
+    RANK_AVG_SESSION,/* "Top Avg Session" — avg session length desc   */
     RANK_RECENT,     /* "Most Recent"   — last_played_days descending */
     RANK_TAB_COUNT
 } RankingsTab;
 
 static const char *rank_tab_labels[RANK_TAB_COUNT] = {
-    "Top Playtime", "Top Launches", "Top Sessions", "Most Recent"
+    "Top Playtime", "Top Launches", "Top Avg Session", "Most Recent"
 };
 
 #define RANK_MAX 10
@@ -53,21 +53,21 @@ typedef enum {
     SORT_LAST_PLAYED,   /* default — most recently played first */
     SORT_PLAYTIME,      /* total_secs descending                */
     SORT_LAUNCHES,      /* launch_count descending              */
-    SORT_SESSIONS,      /* session count descending             */
+    SORT_AVG_SESSION,   /* avg session length descending        */
     SORT_FIRST_PLAYED,  /* first_played_days descending (newest first) */
     SORT_NAME,          /* alphabetical A-Z                     */
     SORT_COUNT
 } SortMode;
 
 static const char *sort_labels[SORT_COUNT] = {
-    "Last Played", "Playtime", "Launches", "Sessions", "First Played", "Name"
+    "Last Played", "Playtime", "Launches", "Avg Session", "First Played", "Name"
 };
 
-/* File-static session count cache for the SORT_SESSIONS comparator.
+/* File-static avg session cache for the SORT_AVG_SESSION comparator.
  * Indexed by the summary's position in the full summaries[256] array.
  * sort_summaries_base points to summaries[0] so the comparator can
  * recover the index via pointer arithmetic. */
-static int sess_counts_cache[PLD_SUMMARY_COUNT];
+static u32 avg_session_cache[PLD_SUMMARY_COUNT];
 static const PldSummary *sort_summaries_base;
 
 /* ── Sync counter helpers ────────────────────────────────────────── */
@@ -110,12 +110,14 @@ static int cmp_launches(const void *a, const void *b) {
     return 0;
 }
 
-static int cmp_sessions(const void *a, const void *b) {
+static int cmp_avg_session(const void *a, const void *b) {
     const PldSummary *sa = *(const PldSummary *const *)a;
     const PldSummary *sb = *(const PldSummary *const *)b;
     int ia = (int)(sa - sort_summaries_base);
     int ib = (int)(sb - sort_summaries_base);
-    return sess_counts_cache[ib] - sess_counts_cache[ia];
+    if (avg_session_cache[ib] != avg_session_cache[ia])
+        return (avg_session_cache[ib] > avg_session_cache[ia]) ? 1 : -1;
+    return 0;
 }
 
 static int cmp_first_played(const void *a, const void *b) {
@@ -145,28 +147,29 @@ static void sort_valid(const PldSummary *valid[], int n,
 {
     if (n <= 1) return;
 
-    /* Pre-compute session counts if needed.
+    /* Pre-compute avg session length if needed.
      * Cache is indexed by summary slot (offset from pld->summaries[0]),
      * so it survives qsort reordering of valid[]. */
-    if (mode == SORT_SESSIONS) {
+    if (mode == SORT_AVG_SESSION) {
         sort_summaries_base = pld->summaries;
         for (int i = 0; i < n; i++) {
             int slot = (int)(valid[i] - pld->summaries);
-            sess_counts_cache[slot] = pld_count_sessions_for(sessions, valid[i]->title_id);
+            avg_session_cache[slot] = (valid[i]->launch_count > 0)
+                ? (valid[i]->total_secs / valid[i]->launch_count) : 0;
         }
     }
 
     typedef int (*cmp_fn)(const void *, const void *);
     static const cmp_fn comparators[SORT_COUNT] = {
         cmp_last_played, cmp_playtime, cmp_launches,
-        cmp_sessions, cmp_first_played, cmp_name
+        cmp_avg_session, cmp_first_played, cmp_name
     };
     qsort(valid, (size_t)n, sizeof(valid[0]), comparators[mode]);
 }
 
 /* ── Rankings builder ──────────────────────────────────────────── */
 
-static int rank_sess_cache[PLD_SUMMARY_COUNT];
+static u32 rank_avg_cache[PLD_SUMMARY_COUNT];
 
 static int cmp_rank_playtime(const void *a, const void *b) {
     const PldSummary *sa = *(const PldSummary *const *)a;
@@ -184,12 +187,14 @@ static int cmp_rank_launches(const void *a, const void *b) {
     return 0;
 }
 
-static int cmp_rank_sessions(const void *a, const void *b) {
+static int cmp_rank_avg_session(const void *a, const void *b) {
     const PldSummary *sa = *(const PldSummary *const *)a;
     const PldSummary *sb = *(const PldSummary *const *)b;
     int ia = (int)(sa - sort_summaries_base);
     int ib = (int)(sb - sort_summaries_base);
-    return rank_sess_cache[ib] - rank_sess_cache[ia];
+    if (rank_avg_cache[ib] != rank_avg_cache[ia])
+        return (rank_avg_cache[ib] > rank_avg_cache[ia]) ? 1 : -1;
+    return 0;
 }
 
 static int cmp_rank_recent(const void *a, const void *b) {
@@ -204,13 +209,14 @@ static int cmp_rank_recent(const void *a, const void *b) {
  * Build the top-N rankings from valid[].
  * ranked[] must have RANK_MAX capacity.
  * Returns the number of ranked entries (min(n, RANK_MAX)).
- * rank_sess_out[] receives session counts for each ranked entry (indexed 0..ret-1).
+ * rank_metric_out[] receives per-entry metric values (avg_secs for
+ * RANK_AVG_SESSION, session counts for other tabs).
  */
 static int build_rankings(const PldSummary *valid[], int n,
                            RankingsTab tab, const PldSessionLog *sessions,
                            const PldFile *pld,
                            const PldSummary *ranked[RANK_MAX],
-                           int rank_sess_out[RANK_MAX])
+                           u32 rank_metric_out[RANK_MAX])
 {
     if (n <= 0) return 0;
 
@@ -219,26 +225,28 @@ static int build_rankings(const PldSummary *valid[], int n,
     if (!tmp) return 0;
     memcpy(tmp, valid, (size_t)n * sizeof(tmp[0]));
 
-    /* Pre-compute session counts for RANK_SESSIONS */
-    if (tab == RANK_SESSIONS) {
+    /* Pre-compute avg session length for RANK_AVG_SESSION */
+    if (tab == RANK_AVG_SESSION) {
         sort_summaries_base = pld->summaries;
         for (int i = 0; i < n; i++) {
             int slot = (int)(tmp[i] - pld->summaries);
-            rank_sess_cache[slot] = pld_count_sessions_for(sessions, tmp[i]->title_id);
+            rank_avg_cache[slot] = (tmp[i]->launch_count > 0)
+                ? (tmp[i]->total_secs / tmp[i]->launch_count) : 0;
         }
     }
 
     typedef int (*cmp_fn)(const void *, const void *);
     static const cmp_fn rank_cmps[RANK_TAB_COUNT] = {
         cmp_rank_playtime, cmp_rank_launches,
-        cmp_rank_sessions, cmp_rank_recent
+        cmp_rank_avg_session, cmp_rank_recent
     };
     qsort(tmp, (size_t)n, sizeof(tmp[0]), rank_cmps[tab]);
 
     int count = (n < RANK_MAX) ? n : RANK_MAX;
     for (int i = 0; i < count; i++) {
         ranked[i] = tmp[i];
-        rank_sess_out[i] = pld_count_sessions_for(sessions, tmp[i]->title_id);
+        rank_metric_out[i] = (tmp[i]->launch_count > 0)
+            ? (tmp[i]->total_secs / tmp[i]->launch_count) : 0;
     }
     free(tmp);
     return count;
@@ -1050,8 +1058,6 @@ static void render_game_list(const PldSummary *const valid[], int n,
         pld_fmt_date(s->first_played_days, d0_buf, sizeof(d0_buf));
         pld_fmt_date(s->last_played_days,  d1_buf, sizeof(d1_buf));
 
-        int sess_count = pld_count_sessions_for(sessions, s->title_id);
-
         C2D_Image icon;
         if (title_icon_get(s->title_id, &icon)) {
             if (alpha == 255)
@@ -1082,9 +1088,14 @@ static void render_game_list(const PldSummary *const valid[], int n,
         u32 text_dim_col = (UI_COL_TEXT_DIM & 0x00FFFFFF) | ((u32)alpha << 24);
         ui_draw_text(60.0f, row_y + 8, UI_SCALE_LG, text_col, name);
         ui_draw_text_right(394, row_y + 8, UI_SCALE_LG, text_dim_col, t_buf);
-        ui_draw_textf(60.0f, row_y + 28, UI_SCALE_SM, text_dim_col,
-                      "L:%u  S:%d  %s-%s",
-                      (unsigned)s->launch_count, sess_count, d0_buf, d1_buf);
+        {
+            u32 avg_secs = (s->launch_count > 0) ? (s->total_secs / s->launch_count) : 0;
+            char avg_buf[20];
+            pld_fmt_time(avg_secs, avg_buf, sizeof(avg_buf));
+            ui_draw_textf(60.0f, row_y + 28, UI_SCALE_SM, text_dim_col,
+                          "L:%u  Avg:%s  %s-%s",
+                          (unsigned)s->launch_count, avg_buf, d0_buf, d1_buf);
+        }
     }
 
     /* Header bar (drawn after rows so it covers any partial overlap) */
@@ -1158,9 +1169,13 @@ static void render_bottom_stats(const PldSummary *valid[], int n,
     ui_draw_text_right(UI_BOT_W - 8, y, UI_SCALE_LG, UI_COL_TEXT_DIM, vbuf);
     y += 24.0f;
 
-    ui_draw_text(8, y, UI_SCALE_LG, UI_COL_TEXT, "Total sessions");
-    snprintf(vbuf, sizeof(vbuf), "%d", sessions->count);
-    ui_draw_text_right(UI_BOT_W - 8, y, UI_SCALE_LG, UI_COL_TEXT_DIM, vbuf);
+    {
+        u32 avg_secs = (total_launches > 0) ? (total_secs / total_launches) : 0;
+        char avg_buf[20];
+        pld_fmt_time(avg_secs, avg_buf, sizeof(avg_buf));
+        ui_draw_text(8, y, UI_SCALE_LG, UI_COL_TEXT, "Avg session");
+        ui_draw_text_right(UI_BOT_W - 8, y, UI_SCALE_LG, UI_COL_TEXT_DIM, avg_buf);
+    }
     y += 24.0f;
 
     ui_draw_text(8, y, UI_SCALE_LG, UI_COL_TEXT, "Most played");
@@ -1184,7 +1199,7 @@ static void render_bottom_stats(const PldSummary *valid[], int n,
 
 static void render_rankings_top(const PldSummary *ranked[], int rank_count,
                                 int rank_sel, int rank_scroll,
-                                const int rank_sess[], RankingsTab tab,
+                                const u32 rank_metric[], RankingsTab tab,
                                 float anim_t)
 {
     /* Header bar */
@@ -1198,17 +1213,17 @@ static void render_rankings_top(const PldSummary *ranked[], int rank_count,
     for (int i = 0; i < rank_count; i++) {
         u32 val = 0;
         switch (tab) {
-            case RANK_PLAYTIME: val = ranked[i]->total_secs;       break;
-            case RANK_LAUNCHES: val = ranked[i]->launch_count;     break;
-            case RANK_SESSIONS: val = (u32)rank_sess[i];           break;
-            case RANK_RECENT:   val = ranked[i]->last_played_days; break;
+            case RANK_PLAYTIME:    val = ranked[i]->total_secs;       break;
+            case RANK_LAUNCHES:    val = ranked[i]->launch_count;     break;
+            case RANK_AVG_SESSION: val = rank_metric[i];              break;
+            case RANK_RECENT:      val = ranked[i]->last_played_days; break;
             default: break;
         }
         if (val > max_val) max_val = val;
     }
 
     char fallback[32];
-    char t_buf[20], d0_buf[12], d1_buf[12];
+    char d0_buf[12], d1_buf[12];
 
     for (int i = rank_scroll; i < rank_scroll + UI_VISIBLE_ROWS && i < rank_count; i++) {
         float row_y = UI_LIST_Y + (float)(i - rank_scroll) * UI_ROW_H;
@@ -1236,10 +1251,10 @@ static void render_rankings_top(const PldSummary *ranked[], int rank_count,
         /* Proportional bar (semi-transparent blue behind row) */
         u32 val = 0;
         switch (tab) {
-            case RANK_PLAYTIME: val = s->total_secs;       break;
-            case RANK_LAUNCHES: val = s->launch_count;     break;
-            case RANK_SESSIONS: val = (u32)rank_sess[i];   break;
-            case RANK_RECENT:   val = s->last_played_days; break;
+            case RANK_PLAYTIME:    val = s->total_secs;       break;
+            case RANK_LAUNCHES:    val = s->launch_count;     break;
+            case RANK_AVG_SESSION: val = rank_metric[i];      break;
+            case RANK_RECENT:      val = s->last_played_days; break;
             default: break;
         }
         float bar_max_w = UI_TOP_W - 4.0f;
@@ -1305,8 +1320,8 @@ static void render_rankings_top(const PldSummary *ranked[], int rank_count,
             case RANK_LAUNCHES:
                 snprintf(metric, sizeof(metric), "%u", (unsigned)s->launch_count);
                 break;
-            case RANK_SESSIONS:
-                snprintf(metric, sizeof(metric), "%d", rank_sess[i]);
+            case RANK_AVG_SESSION:
+                pld_fmt_time(rank_metric[i], metric, sizeof(metric));
                 break;
             case RANK_RECENT:
                 pld_fmt_date(s->last_played_days, metric, sizeof(metric));
@@ -1318,12 +1333,15 @@ static void render_rankings_top(const PldSummary *ranked[], int rank_count,
         ui_draw_text_right(394, row_y + 8, UI_SCALE_LG, text_dim_col, metric);
 
         /* Secondary line */
-        pld_fmt_time(s->total_secs, t_buf, sizeof(t_buf));
-        pld_fmt_date(s->first_played_days, d0_buf, sizeof(d0_buf));
-        pld_fmt_date(s->last_played_days,  d1_buf, sizeof(d1_buf));
-        ui_draw_textf(82.0f, row_y + 28, UI_SCALE_SM, text_dim_col,
-                      "L:%u  S:%d  %s-%s",
-                      (unsigned)s->launch_count, rank_sess[i], d0_buf, d1_buf);
+        {
+            char avg_buf[20];
+            pld_fmt_time(rank_metric[i], avg_buf, sizeof(avg_buf));
+            pld_fmt_date(s->first_played_days, d0_buf, sizeof(d0_buf));
+            pld_fmt_date(s->last_played_days,  d1_buf, sizeof(d1_buf));
+            ui_draw_textf(82.0f, row_y + 28, UI_SCALE_SM, text_dim_col,
+                          "L:%u  Avg:%s  %s-%s",
+                          (unsigned)s->launch_count, avg_buf, d0_buf, d1_buf);
+        }
     }
 
     /* Empty state */
@@ -1338,7 +1356,7 @@ static void render_rankings_top(const PldSummary *ranked[], int rank_count,
 }
 
 static void render_rankings_bot(const PldSummary *ranked[], int rank_count,
-                                const int rank_sess[], RankingsTab tab)
+                                const u32 rank_metric[], RankingsTab tab)
 {
     /* Header */
     ui_draw_rect(0, 0, UI_BOT_W, UI_HEADER_H, UI_COL_HEADER);
@@ -1354,11 +1372,9 @@ static void render_rankings_bot(const PldSummary *ranked[], int rank_count,
 
     u32 total_time = 0;
     u32 total_launches = 0;
-    int total_sessions = 0;
     for (int i = 0; i < rank_count; i++) {
         total_time += ranked[i]->total_secs;
         total_launches += ranked[i]->launch_count;
-        total_sessions += rank_sess[i];
     }
 
     char tbuf[20];
@@ -1372,9 +1388,13 @@ static void render_rankings_bot(const PldSummary *ranked[], int rank_count,
     ui_draw_text_right(UI_BOT_W - 8, y, UI_SCALE_LG, UI_COL_TEXT_DIM, vbuf);
     y += 24.0f;
 
-    ui_draw_text(8, y, UI_SCALE_LG, UI_COL_TEXT, "Total sessions");
-    snprintf(vbuf, sizeof(vbuf), "%d", total_sessions);
-    ui_draw_text_right(UI_BOT_W - 8, y, UI_SCALE_LG, UI_COL_TEXT_DIM, vbuf);
+    {
+        u32 avg_secs = (total_launches > 0) ? (total_time / total_launches) : 0;
+        char avg_buf[20];
+        pld_fmt_time(avg_secs, avg_buf, sizeof(avg_buf));
+        ui_draw_text(8, y, UI_SCALE_LG, UI_COL_TEXT, "Avg session");
+        ui_draw_text_right(UI_BOT_W - 8, y, UI_SCALE_LG, UI_COL_TEXT_DIM, avg_buf);
+    }
 
     /* Divider */
     ui_draw_rect(0, 180, UI_BOT_W, 1, UI_COL_DIVIDER);
@@ -1436,8 +1456,12 @@ static void render_detail_top(const PldSummary *s, const char *name,
                   (unsigned)s->launch_count);
     sy += 18.0f;
 
-    ui_draw_textf(136, sy, UI_SCALE_LG, UI_COL_TEXT, "Sessions: %d",
-                  sess_count);
+    {
+        u32 avg_secs = (s->launch_count > 0) ? (s->total_secs / s->launch_count) : 0;
+        char avg_buf[20];
+        pld_fmt_time(avg_secs, avg_buf, sizeof(avg_buf));
+        ui_draw_textf(136, sy, UI_SCALE_LG, UI_COL_TEXT, "Avg session: %s", avg_buf);
+    }
     sy += 18.0f;
 
     {
@@ -1573,7 +1597,7 @@ static Result export_data(const PldFile *pld, const PldSessionLog *sessions)
     }
 
     /* CSV header */
-    fputs("title_id,name,playtime_secs,playtime,launches,sessions,first_played,last_played\n", csv);
+    fputs("title_id,name,playtime_secs,playtime,launches,sessions,avg_session_length_secs,avg_session_length,first_played,last_played\n", csv);
 
     /* JSON opening */
     fputs("{\n  \"titles\": [\n", json);
@@ -1595,13 +1619,18 @@ static Result export_data(const PldFile *pld, const PldSessionLog *sessions)
         pld_fmt_date(s->last_played_days, last_buf, sizeof(last_buf));
 
         int sess_count = pld_count_sessions_for(sessions, s->title_id);
+        u32 avg_secs = (s->launch_count > 0) ? (s->total_secs / s->launch_count) : 0;
+        char avg_buf[20];
+        pld_fmt_time(avg_secs, avg_buf, sizeof(avg_buf));
 
         /* CSV row */
         fprintf(csv, "%016llX,", (unsigned long long)s->title_id);
         csv_write_escaped(csv, name);
-        fprintf(csv, ",%lu,%s,%u,%d,%s,%s\n",
+        fprintf(csv, ",%lu,%s,%u,%d,%lu,%s,%s,%s\n",
                 (unsigned long)s->total_secs, time_buf,
-                s->launch_count, sess_count, first_buf, last_buf);
+                s->launch_count, sess_count,
+                (unsigned long)avg_secs, avg_buf,
+                first_buf, last_buf);
 
         /* JSON entry */
         if (!first_json) fputs(",\n", json);
@@ -1615,6 +1644,8 @@ static Result export_data(const PldFile *pld, const PldSessionLog *sessions)
         fprintf(json, "      \"playtime\": \"%s\",\n", time_buf);
         fprintf(json, "      \"launches\": %u,\n", s->launch_count);
         fprintf(json, "      \"sessions\": %d,\n", sess_count);
+        fprintf(json, "      \"avg_session_length_secs\": %lu,\n", (unsigned long)avg_secs);
+        fprintf(json, "      \"avg_session_length\": \"%s\",\n", avg_buf);
         fprintf(json, "      \"first_played\": \"%s\",\n", first_buf);
         fprintf(json, "      \"last_played\": \"%s\"\n", last_buf);
         fprintf(json, "    }");
@@ -1951,7 +1982,7 @@ int main(void)
     int  rank_sel    = 0;
     int  rank_scroll = 0;
     const PldSummary *ranked[RANK_MAX];
-    int  rank_sess[RANK_MAX];
+    u32  rank_metric[RANK_MAX];
     int  rank_count  = 0;
 
     /* ── Input loop ── */
@@ -1996,13 +2027,13 @@ int main(void)
             } else if (keys & KEY_L) {
                 rank_tab = (rank_tab + RANK_TAB_COUNT - 1) % RANK_TAB_COUNT;
                 rank_count = build_rankings(valid, n, rank_tab, &sessions, &pld,
-                                            ranked, rank_sess);
+                                            ranked, rank_metric);
                 rank_sel = 0; rank_scroll = 0;
                 rank_anim_frame = 0;
             } else if (keys & KEY_R) {
                 rank_tab = (rank_tab + 1) % RANK_TAB_COUNT;
                 rank_count = build_rankings(valid, n, rank_tab, &sessions, &pld,
-                                            ranked, rank_sess);
+                                            ranked, rank_metric);
                 rank_sel = 0; rank_scroll = 0;
                 rank_anim_frame = 0;
             }
@@ -2093,9 +2124,9 @@ int main(void)
             ui_begin_frame();
             ui_target_top();
             render_rankings_top(ranked, rank_count, rank_sel, rank_scroll,
-                                rank_sess, rank_tab, rank_anim_t);
+                                rank_metric, rank_tab, rank_anim_t);
             ui_target_bot();
-            render_rankings_bot(ranked, rank_count, rank_sess, rank_tab);
+            render_rankings_bot(ranked, rank_count, rank_metric, rank_tab);
             ui_end_frame();
         } else if (menu_open) {
             /* ── Menu open: navigate and confirm ── */
@@ -2323,7 +2354,7 @@ int main(void)
                 rank_sel = 0; rank_scroll = 0;
                 rank_anim_frame = 0;
                 rank_count = build_rankings(valid, n, rank_tab, &sessions, &pld,
-                                            ranked, rank_sess);
+                                            ranked, rank_metric);
             } else if (keys & KEY_Y) {
                 /* Cycle filter: games → games+sys → all → games */
                 if (!show_system && !show_unknown) {

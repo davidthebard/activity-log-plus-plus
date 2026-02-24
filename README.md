@@ -6,15 +6,15 @@ The official Activity Log app only shows play history for titles installed on th
 
 ## Features
 
-- **Full play history viewer** — Browse all titles with playtime, launch count, session count, streak tracking, and date range
+- **Full play history viewer** — Browse all titles with playtime, launch count, average session length, streak tracking, and date range
 - **Local Wi-Fi sync** — Transfer and merge play data between two 3DS systems on the same network (UDP discovery + TCP transfer)
 - **Backup and restore** — Create timestamped backups of your play data on the SD card (up to 10, oldest auto-pruned)
 - **CSV/JSON export** — Export a summary of all titles to `export.csv` and `export.json` on the SD card for analysis on a PC
-- **Rankings** — Top 10 charts for playtime, launches, sessions, and most recently played
+- **Rankings** — Top 10 charts for playtime, launches, average session length, and most recently played
 - **Pie and bar charts** — Visual breakdown of playtime distribution across your library
 - **Game icons** — Fetched from GameTDB and cached on the SD card
 - **Title name lookup** — Names resolved from the system's AM service, a built-in database, and synced between devices
-- **Sort and filter** — Sort by last played, playtime, launches, sessions, first played, or name; filter between games, games + system apps, or all titles
+- **Sort and filter** — Sort by last played, playtime, launches, average session length, first played, or name; filter between games, games + system apps, or all titles
 
 ## How It Works
 
