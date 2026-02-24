@@ -19,6 +19,14 @@
 
 #define SYNC_COUNT_PATH  "sdmc:/3ds/activity-log-pp/synccount"
 
+/* Region save IDs for Activity Log (used at startup and reset) */
+static const u32 region_ids[] = {
+    ACTIVITY_SAVE_ID_USA,
+    ACTIVITY_SAVE_ID_EUR,
+    ACTIVITY_SAVE_ID_JPN,
+    ACTIVITY_SAVE_ID_KOR,
+};
+
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -1156,8 +1164,8 @@ static void render_detail_bot(void)
 
 static void render_menu(int sel)
 {
-    static const char *items[] = { "Sync", "Backup", "Restore", "Charts", "Quit" };
-    static const int   NITEMS  = 5;
+    static const char *items[] = { "Charts", "Sync", "Backup", "Restore", "Reset", "Quit" };
+    static const int   NITEMS  = 6;
 
     float mx     = 8.0f;
     float my     = 28.0f;
@@ -1371,12 +1379,6 @@ int main(void)
     draw_message_screen("Activity Log++", "Opening save archive...");
 
     /* Try each region's Activity Log save ID until one opens. */
-    static const u32 region_ids[] = {
-        ACTIVITY_SAVE_ID_USA,
-        ACTIVITY_SAVE_ID_EUR,
-        ACTIVITY_SAVE_ID_JPN,
-        ACTIVITY_SAVE_ID_KOR,
-    };
     FS_Archive archive = 0;
     Result rc = -1;
     for (int i = 0; i < 4; i++) {
@@ -1654,7 +1656,7 @@ int main(void)
             if (keys & KEY_UP) {
                 if (menu_sel > 0) menu_sel--;
             } else if (keys & KEY_DOWN) {
-                if (menu_sel < 4) menu_sel++;
+                if (menu_sel < 5) menu_sel++;
             } else if (keys & KEY_B) {
                 menu_open = false;
             } else if (keys & KEY_START) {
@@ -1662,7 +1664,15 @@ int main(void)
                 quit_requested = true;
             } else if (keys & KEY_A) {
                 switch (menu_sel) {
-                    case 0: /* Sync */
+                    case 0: /* Charts */
+                        pie_count = build_pie_data(valid, n, pie_slices, &pie_total);
+                        charts_view = true;
+                        chart_tab = CHART_PIE;
+                        chart_anim_frame = 0;
+                        menu_open = false;
+                        break;
+
+                    case 1: /* Sync */
                         run_sync_flow(&pld, &sessions, &sync_count,
                                       status_msg, sizeof(status_msg));
                         n = collect_valid(&pld, valid, show_system, show_unknown);
@@ -1675,7 +1685,7 @@ int main(void)
                         menu_open = false;
                         break;
 
-                    case 1: /* Backup */
+                    case 2: /* Backup */
                         {
                             Result bk_rc = pld_backup_from_path(PLD_MERGED_PATH);
                             if (R_SUCCEEDED(bk_rc))
@@ -1687,7 +1697,7 @@ int main(void)
                         menu_open = false;
                         break;
 
-                    case 2: /* Restore */
+                    case 3: /* Restore */
                         {
                             PldBackupList bklist;
                             Result list_rc = pld_list_backups(&bklist);
@@ -1780,15 +1790,77 @@ int main(void)
                         menu_open = false;
                         break;
 
-                    case 3: /* Charts */
-                        pie_count = build_pie_data(valid, n, pie_slices, &pie_total);
-                        charts_view = true;
-                        chart_tab = CHART_PIE;
-                        chart_anim_frame = 0;
+                    case 4: /* Reset */
+                        {
+                            /* Confirmation sub-loop */
+                            bool rst_confirmed = false;
+                            bool rst_done = false;
+                            while (!rst_done && aptMainLoop()) {
+                                hidScanInput();
+                                u32 rkeys = hidKeysDown();
+                                if (rkeys & KEY_A) {
+                                    rst_confirmed = true;
+                                    rst_done = true;
+                                } else if (rkeys & (KEY_B | KEY_START)) {
+                                    rst_done = true;
+                                }
+                                if (!rst_done) {
+                                    draw_message_screen("Reset to Local",
+                                        "Reset to local activity data?\n\n"
+                                        "NOTE: This will remove data on\n"
+                                        "this console from any synced systems\n\n"
+                                        "A: confirm   B: cancel");
+                                }
+                            }
+                            if (rst_confirmed) {
+                                draw_message_screen("Activity Log++", "Re-reading NAND data...");
+                                FS_Archive rst_archive = 0;
+                                Result rst_rc = -1;
+                                for (int i = 0; i < 4; i++) {
+                                    rst_rc = pld_open_archive(&rst_archive, region_ids[i]);
+                                    if (R_SUCCEEDED(rst_rc)) break;
+                                }
+                                if (R_SUCCEEDED(rst_rc)) {
+                                    PldFile rst_pld;
+                                    rst_rc = pld_read_summary(rst_archive, &rst_pld);
+                                    if (R_SUCCEEDED(rst_rc)) {
+                                        PldSessionLog rst_sessions = {NULL, 0};
+                                        rst_rc = pld_read_sessions(rst_archive, &rst_sessions);
+                                        FSUSER_CloseArchive(rst_archive);
+                                        if (R_SUCCEEDED(rst_rc)) {
+                                            pld_backup_from_path(PLD_MERGED_PATH);
+                                            rst_rc = pld_write_sd(PLD_MERGED_PATH, &rst_pld, &rst_sessions);
+                                        }
+                                        if (R_SUCCEEDED(rst_rc)) {
+                                            pld_sessions_free(&sessions);
+                                            pld      = rst_pld;
+                                            sessions = rst_sessions;
+                                            n = collect_valid(&pld, valid, show_system, show_unknown);
+                                            sort_valid(valid, n, sort_mode, &sessions, &pld);
+                                            sel = 0; scroll_top = 0; scroll_y = 0.0f;
+                                            sync_count = 0;
+                                            save_sync_count(0);
+                                            snprintf(status_msg, sizeof(status_msg), "Reset to local data");
+                                        } else {
+                                            pld_sessions_free(&rst_sessions);
+                                            snprintf(status_msg, sizeof(status_msg),
+                                                     "Reset failed: 0x%08lX", rst_rc);
+                                        }
+                                    } else {
+                                        FSUSER_CloseArchive(rst_archive);
+                                        snprintf(status_msg, sizeof(status_msg),
+                                                 "Reset failed: 0x%08lX", rst_rc);
+                                    }
+                                } else {
+                                    snprintf(status_msg, sizeof(status_msg),
+                                             "Reset failed: 0x%08lX", rst_rc);
+                                }
+                            }
+                        }
                         menu_open = false;
                         break;
 
-                    case 4: /* Quit */
+                    case 5: /* Quit */
                         quit_requested = true;
                         break;
                 }
