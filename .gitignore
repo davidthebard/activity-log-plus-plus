@@ -5,3 +5,6 @@ build/
 temp/
 .claude/
 IDEAS.md
+/pld.dat
+/alldbs.json
+/list_*.json
