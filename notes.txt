@@ -1,0 +1,40 @@
+  - M3: implement full pld.dat backup/restore functionality
+  - M4: TCP host/client handshake over local Wi-Fi (SOC service + soc:U)
+  - M5: improve pld.dat backup/restore functionality to support multiple backups with timestamps
+  - M6: Merge algorithm (same title+hour → sum play_secs, cap at 3600)
+  - M7: Summary exchange + merge in memory (viewer shows correct merged app count and stats — no
+  NAND write yet)
+  - M8: Write both the merged session log and summary to NAND with backup of original
+
+  M9 — SD card as the merged-data store
+  Replace the NAND write flow entirely. On first launch, read from NAND as now. After a successful
+   sync, write the merged result to sdmc:/3ds/3ds-activity-sync/merged.dat (same pld.dat format,
+  so all existing code reuses). On subsequent launches, load from merged.dat if it exists rather
+  than re-reading NAND. Remove the M8 NAND write block. Timestamped backups stay and now back up
+  the SD merged file.
+
+  M10 — Embedded title database
+  A static sorted array of (title_id, name) pairs compiled into the binary. Source data from a
+  community title database (there are GitHub repos maintaining exactly this — title_id to name
+  mappings for all retail and eShop titles). A build-time script converts it to a C source file.
+  title_db_lookup(u64 title_id) does a binary search and returns the name string or NULL for
+  unknowns. A few hundred KB in the ROM, negligible at runtime.
+
+  M11 — Graphics UI: game list
+  Switch from printf console mode to citro2d rendering. Top screen becomes a scrollable game list
+  — name (from title DB), total playtime, launch count. Bottom screen shows aggregate stats (total
+   games tracked, combined playtime, number of syncs). Clean visual style inspired by the native
+  Activity Log's layout and colour scheme.
+
+  M12 — AM name query + SD persistence + sync exchange
+  Use the 3DS AM service to enumerate all installed titles (NAND, SD, and inserted cartridge),
+  read icon.bin (SMDH) from each title's content archive via FSUSER_OpenFileDirectly, extract
+  the UTF-16 short description, and convert to UTF-8. Persist results to
+  sdmc:/3ds/3ds-activity-sync/title_names.dat. During sync, exchange title name databases so
+  each device learns the names of the other's games. AM-scanned names take priority over the
+  embedded static database; the static DB remains as a fallback for uninstalled titles.
+
+  M13 — Per-title detail view
+  Selecting a game from the list opens a detail screen: full name, total time, launch count,
+  first/last played dates, and a scrollable session log showing each hour-slot with its date and
+  duration. B returns to the list.
