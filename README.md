@@ -41,7 +41,7 @@ Activity Log++ reads this data from NAND (read-only), merges it with data from o
 | X | Rankings | — | — |
 | Y | Create backup | — | — |
 | L/R | Cycle sort mode | — | Cycle tab |
-| START | Exit | Exit | Exit |
+| START | Open menu | — | — |
 
 ## Building
 

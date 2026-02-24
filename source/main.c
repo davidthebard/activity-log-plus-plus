@@ -1680,42 +1680,6 @@ int main(void)
                 menu_sel  = 0;
             }
 
-            /* ── DEBUG: SELECT resets merged.dat to raw NAND state ── REMOVE BEFORE RELEASE */
-            else if (keys & KEY_SELECT) {
-                FS_Archive dbg_archive = 0;
-                Result dbg_rc = -1;
-                for (int i = 0; i < 4; i++) {
-                    dbg_rc = pld_open_archive(&dbg_archive, region_ids[i]);
-                    if (R_SUCCEEDED(dbg_rc)) break;
-                }
-                if (R_SUCCEEDED(dbg_rc)) {
-                    PldFile dbg_pld;
-                    PldSessionLog dbg_sessions = {NULL, 0};
-                    dbg_rc = pld_read_summary(dbg_archive, &dbg_pld);
-                    if (R_SUCCEEDED(dbg_rc))
-                        dbg_rc = pld_read_sessions(dbg_archive, &dbg_sessions);
-                    FSUSER_CloseArchive(dbg_archive);
-                    if (R_SUCCEEDED(dbg_rc))
-                        dbg_rc = pld_write_sd(PLD_MERGED_PATH, &dbg_pld, &dbg_sessions);
-                    if (R_SUCCEEDED(dbg_rc)) {
-                        pld_sessions_free(&sessions);
-                        pld      = dbg_pld;
-                        sessions = dbg_sessions;
-                        n = collect_valid(&pld, valid, show_system, show_unknown);
-                        sort_valid(valid, n, sort_mode, &sessions, &pld);
-                        sel = 0; scroll_top = 0;
-                        snprintf(status_msg, sizeof(status_msg), "DBG: NAND reset OK");
-                    } else {
-                        pld_sessions_free(&dbg_sessions);
-                        snprintf(status_msg, sizeof(status_msg),
-                                 "DBG: reset failed 0x%08lX", dbg_rc);
-                    }
-                } else {
-                    snprintf(status_msg, sizeof(status_msg),
-                             "DBG: archive open failed 0x%08lX", dbg_rc);
-                }
-            }
-
             else if (keys & KEY_X) {
                 rankings_view = true;
                 rank_tab = RANK_PLAYTIME;
