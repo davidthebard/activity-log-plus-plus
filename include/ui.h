@@ -55,6 +55,7 @@ void ui_draw_image(C2D_Image img, float x, float y, float size);
 void ui_draw_image_alpha(C2D_Image img, float x, float y, float size, u8 alpha);
 void ui_draw_triangle(float x0, float y0, float x1, float y1,
                       float x2, float y2, u32 color);
+void ui_draw_circle(float cx, float cy, float r, u32 color);
 
 /* Text measurement & truncation */
 float ui_text_width(const char *str, float scale);

@@ -665,7 +665,36 @@ static int collect_valid(const PldFile *pld,
  * (newline-delimited lines) below it on the top screen.
  * The bottom screen shows a simple "Activity Log++" header.
  */
-static void draw_message_screen(const char *title, const char *body)
+static void draw_spinner(float cx, float cy)
+{
+    static int spinner_frame = 0;
+    spinner_frame++;
+
+    int active = (spinner_frame / 8) % 8;
+    float ring_r = 24.0f;
+    float dot_r  = 6.0f;
+
+    for (int i = 0; i < 8; i++) {
+        float angle = (float)i * 2.0f * (float)M_PI / 8.0f - (float)M_PI / 2.0f;
+        float dx = cx + ring_r * cosf(angle);
+        float dy = cy + ring_r * sinf(angle);
+
+        /* Distance behind active dot (wrapping) */
+        int dist = (active - i + 8) % 8;
+        u8 alpha;
+        if      (dist == 0) alpha = 255;
+        else if (dist == 1) alpha = 192;
+        else if (dist == 2) alpha = 128;
+        else if (dist == 3) alpha = 64;
+        else                alpha = 40;
+
+        u32 color = C2D_Color32(0x66, 0x66, 0x66, alpha);
+        ui_draw_circle(dx, dy, dot_r, color);
+    }
+}
+
+static void draw_message_screen_ex(const char *title, const char *body,
+                                   bool show_spinner)
 {
     ui_begin_frame();
 
@@ -686,11 +715,283 @@ static void draw_message_screen(const char *title, const char *body)
         line = nl ? nl + 1 : NULL;
     }
 
+    if (show_spinner)
+        draw_spinner(UI_TOP_W / 2.0f, 180.0f);
+
     ui_target_bot();
     ui_draw_rect(0, 0, UI_BOT_W, UI_HEADER_H, UI_COL_HEADER);
     ui_draw_text(6, 4, UI_SCALE_HDR, UI_COL_HEADER_TXT, "Activity Log++");
 
     ui_end_frame();
+}
+
+static void draw_message_screen(const char *title, const char *body)
+{
+    draw_message_screen_ex(title, body, false);
+}
+
+static void draw_loading_screen(const char *title, const char *body)
+{
+    draw_message_screen_ex(title, body, true);
+}
+
+static void draw_progress_screen(const char *title, const char *body,
+                                 int step, int total_steps)
+{
+    ui_begin_frame();
+
+    ui_target_top();
+    ui_draw_rect(0, 0, UI_TOP_W, UI_HEADER_H, UI_COL_HEADER);
+    ui_draw_text(6, 4, UI_SCALE_HDR, UI_COL_HEADER_TXT, title);
+
+    /* Draw body lines split on '\n' */
+    char tmp[256];
+    snprintf(tmp, sizeof(tmp), "%s", body);
+    char *line = tmp;
+    float y = 36.0f;
+    while (line && *line) {
+        char *nl = strchr(line, '\n');
+        if (nl) *nl = '\0';
+        ui_draw_text(8, y, UI_SCALE_LG, UI_COL_TEXT, line);
+        y += 20.0f;
+        line = nl ? nl + 1 : NULL;
+    }
+
+    draw_spinner(UI_TOP_W / 2.0f, 180.0f);
+
+    ui_target_bot();
+    ui_draw_rect(0, 0, UI_BOT_W, UI_HEADER_H, UI_COL_HEADER);
+    ui_draw_text(6, 4, UI_SCALE_HDR, UI_COL_HEADER_TXT, "Activity Log++");
+
+    ui_end_frame();
+}
+
+/* ── Background-thread spinner helper ───────────────────────────── */
+
+typedef void (*WorkerFunc)(void *arg);
+
+typedef struct {
+    WorkerFunc    func;
+    void         *arg;
+    volatile bool done;
+} WorkerCtx;
+
+static void worker_entry(void *raw) {
+    WorkerCtx *ctx = (WorkerCtx *)raw;
+    ctx->func(ctx->arg);
+    ctx->done = true;
+}
+
+static void run_with_spinner(const char *title, const char *body,
+                             int step, int total_steps,
+                             WorkerFunc func, void *arg)
+{
+    WorkerCtx ctx = { func, arg, false };
+    Thread thread = threadCreate(worker_entry, &ctx, 0x8000, 0x38, 1, false);
+    if (!thread)
+        thread = threadCreate(worker_entry, &ctx, 0x8000, 0x38, -2, false);
+    if (thread) {
+        while (!ctx.done && aptMainLoop()) {
+            if (step > 0)
+                draw_progress_screen(title, body, step, total_steps);
+            else
+                draw_loading_screen(title, body);
+        }
+        threadJoin(thread, U64_MAX);
+        threadFree(thread);
+    } else {
+        /* Fallback: synchronous */
+        if (step > 0)
+            draw_progress_screen(title, body, step, total_steps);
+        else
+            draw_loading_screen(title, body);
+        func(arg);
+    }
+}
+
+static void run_loading_with_spinner(const char *title, const char *body,
+                                     WorkerFunc func, void *arg)
+{
+    run_with_spinner(title, body, 0, 0, func, arg);
+}
+
+/* ── Worker arg structs and functions ──────────────────────────── */
+
+/* Step 1: Open archive */
+typedef struct {
+    const u32 *region_ids;
+    int        region_count;
+    FS_Archive archive;
+    Result     rc;
+} OpenArchiveArgs;
+
+static void open_archive_work(void *raw) {
+    OpenArchiveArgs *a = (OpenArchiveArgs *)raw;
+    a->rc = -1;
+    for (int i = 0; i < a->region_count; i++) {
+        a->rc = pld_open_archive(&a->archive, a->region_ids[i]);
+        if (R_SUCCEEDED(a->rc)) break;
+    }
+}
+
+/* Step 2: Read summary + sessions */
+typedef struct {
+    FS_Archive     archive;
+    PldFile       *pld;
+    PldSessionLog *sessions;
+    Result         rc_summary;
+    Result         rc_sessions;
+} ReadPldArgs;
+
+static void read_pld_work(void *raw) {
+    ReadPldArgs *a = (ReadPldArgs *)raw;
+    a->rc_summary = pld_read_summary(a->archive, a->pld);
+    if (R_FAILED(a->rc_summary)) {
+        a->rc_sessions = -1;
+        return;
+    }
+    a->rc_sessions = pld_read_sessions(a->archive, a->sessions);
+}
+
+/* Step 3: Merge */
+typedef struct {
+    PldFile       *pld;
+    PldSessionLog *sessions;
+} MergeArgs;
+
+static void merge_work(void *raw) {
+    MergeArgs *a = (MergeArgs *)raw;
+    PldFile       sd_pld;
+    PldSessionLog sd_sessions = {NULL, 0};
+    mkdir(PLD_BACKUP_DIR, 0777);
+    if (R_SUCCEEDED(pld_read_sd(PLD_MERGED_PATH, &sd_pld, &sd_sessions))) {
+        pld_merge_sessions(a->sessions, &sd_sessions, true);
+        pld_merge_summaries(a->pld, sd_pld.summaries, sd_pld.summary_count, true);
+        pld_sessions_free(&sd_sessions);
+        for (int i = 0; i < PLD_SUMMARY_COUNT; i++) {
+            PldSummary *s = &a->pld->summaries[i];
+            if (pld_summary_is_empty(s)) continue;
+            s->total_secs = 0;
+            for (int j = 0; j < a->sessions->count; j++)
+                if (a->sessions->entries[j].title_id == s->title_id)
+                    s->total_secs += a->sessions->entries[j].play_secs;
+        }
+    }
+    pld_write_sd(PLD_MERGED_PATH, a->pld, a->sessions);
+}
+
+/* Step 4: title_names_load (trivial wrapper) */
+static void title_names_load_work(void *arg) {
+    (void)arg;
+    title_names_load();
+}
+
+/* Step 5: Scan installed titles */
+typedef struct {
+    int new_names;
+} ScanNamesArgs;
+
+static void scan_names_work(void *raw) {
+    ScanNamesArgs *a = (ScanNamesArgs *)raw;
+    a->new_names = title_names_scan_installed();
+    if (a->new_names > 0) title_names_save();
+}
+
+/* Step 6: title_icons_load_sd_cache (trivial wrapper) */
+static void title_icons_load_work(void *arg) {
+    (void)arg;
+    title_icons_load_sd_cache();
+}
+
+/* Step 7 + post-sync: icon_fetch_missing */
+typedef struct {
+    const PldSummary *const *valid;
+    int n;
+} IconFetchArgs;
+
+static void icon_fetch_work(void *raw) {
+    IconFetchArgs *a = (IconFetchArgs *)raw;
+    icon_fetch_missing(a->valid, a->n);
+}
+
+/* Sync: net_init */
+typedef struct {
+    NetCtx *ctx;
+    NetRole role;
+    Result  rc;
+} NetInitArgs;
+
+static void net_init_work(void *raw) {
+    NetInitArgs *a = (NetInitArgs *)raw;
+    a->rc = net_init(a->ctx, a->role);
+}
+
+/* Sync: session exchange */
+typedef struct {
+    NetCtx        *ctx;
+    PldSessionLog *sessions;
+    int            new_sess;
+    int            rc;
+} NetExchSessionsArgs;
+
+static void net_exch_sessions_work(void *raw) {
+    NetExchSessionsArgs *a = (NetExchSessionsArgs *)raw;
+    a->rc = net_exchange_sessions(a->ctx, a->sessions, &a->new_sess);
+}
+
+/* Sync: summary exchange */
+typedef struct {
+    NetCtx  *ctx;
+    PldFile *pld;
+    int      new_apps;
+    int      rc;
+} NetExchSummariesArgs;
+
+static void net_exch_summaries_work(void *raw) {
+    NetExchSummariesArgs *a = (NetExchSummariesArgs *)raw;
+    a->rc = net_exchange_summaries(a->ctx, a->pld, &a->new_apps);
+}
+
+/* Sync: title name exchange */
+typedef struct {
+    NetCtx *ctx;
+    int     rc;
+} NetExchNamesArgs;
+
+static void net_exch_names_work(void *raw) {
+    NetExchNamesArgs *a = (NetExchNamesArgs *)raw;
+    a->rc = net_exchange_title_names(a->ctx);
+    if (a->rc == 0) title_names_save();
+}
+
+/* Reset: re-read NAND data */
+typedef struct {
+    const u32     *region_ids;
+    int            region_count;
+    PldFile        pld;
+    PldSessionLog  sessions;
+    Result         rc;
+} ResetReadArgs;
+
+static void reset_read_work(void *raw) {
+    ResetReadArgs *a = (ResetReadArgs *)raw;
+    a->sessions.entries = NULL;
+    a->sessions.count   = 0;
+    a->rc = -1;
+    FS_Archive rst_archive = 0;
+    for (int i = 0; i < a->region_count; i++) {
+        a->rc = pld_open_archive(&rst_archive, a->region_ids[i]);
+        if (R_SUCCEEDED(a->rc)) break;
+    }
+    if (R_FAILED(a->rc)) return;
+    a->rc = pld_read_summary(rst_archive, &a->pld);
+    if (R_FAILED(a->rc)) { FSUSER_CloseArchive(rst_archive); return; }
+    a->rc = pld_read_sessions(rst_archive, &a->sessions);
+    FSUSER_CloseArchive(rst_archive);
+    if (R_FAILED(a->rc)) { pld_sessions_free(&a->sessions); return; }
+    pld_backup_from_path(PLD_MERGED_PATH);
+    a->rc = pld_write_sd(PLD_MERGED_PATH, &a->pld, &a->sessions);
+    if (R_FAILED(a->rc)) pld_sessions_free(&a->sessions);
 }
 
 /* ── Rendering ──────────────────────────────────────────────────── */
@@ -1246,17 +1547,18 @@ static void run_sync_flow(PldFile *pld, PldSessionLog *sessions,
         hidScanInput();
         u32 role_keys = hidKeysDown();
 
-        if (role_keys & (KEY_A | KEY_B | KEY_START)) {
-            if (role_keys & KEY_START) return;  /* cancel/back to viewer */
-            /* KEY_A = Host, KEY_B = Client */
-            NetRole role = (role_keys & KEY_A) ? NET_ROLE_HOST : NET_ROLE_CLIENT;
-            draw_message_screen("Activity Log++", "Initializing network...");
-            Result net_rc = net_init(&net_ctx, role);
-            if (R_FAILED(net_rc)) {
+        if (role_keys & (KEY_X | KEY_Y | KEY_B)) {
+            if (role_keys & KEY_B) return;  /* cancel/back to viewer */
+            /* KEY_X = Host, KEY_Y = Client */
+            NetRole role = (role_keys & KEY_X) ? NET_ROLE_HOST : NET_ROLE_CLIENT;
+            NetInitArgs ni_args = { &net_ctx, role, -1 };
+            run_loading_with_spinner("Activity Log++", "Initializing network...",
+                                     net_init_work, &ni_args);
+            if (R_FAILED(ni_args.rc)) {
                 char err_body[80];
                 snprintf(err_body, sizeof(err_body),
                          "Network init failed: 0x%08lX\n\nPress START to continue.",
-                         net_rc);
+                         ni_args.rc);
                 while (aptMainLoop()) {
                     hidScanInput();
                     if (hidKeysDown() & KEY_START) break;
@@ -1269,7 +1571,7 @@ static void run_sync_flow(PldFile *pld, PldSessionLog *sessions,
         }
 
         draw_message_screen("Activity Log++",
-                            "Connect to another 3DS?\n\nA: Host\nB: Client\nSTART: Cancel");
+                            "Connect to another 3DS?\n\nX: Host\nY: Client\nB: Back");
     }
 
     if (!net_active) return;
@@ -1334,7 +1636,8 @@ static void run_sync_flow(PldFile *pld, PldSessionLog *sessions,
                          net_ctx.peer_ip);
             }
 
-            draw_message_screen(net_title, net_body);
+            draw_message_screen_ex(net_title, net_body,
+                                   net_ctx.state != NET_STATE_ERROR);
         }
     }
 
@@ -1348,20 +1651,28 @@ static void run_sync_flow(PldFile *pld, PldSessionLog *sessions,
     int new_sess = 0, new_apps = 0;
 
     /* Step 1: Session exchange */
-    draw_message_screen("Syncing...", "Exchanging sessions...");
-    sess_rc = net_exchange_sessions(&net_ctx, sessions, &new_sess);
+    {
+        NetExchSessionsArgs es_args = { &net_ctx, sessions, 0, -1 };
+        run_loading_with_spinner("Syncing...", "Exchanging sessions...",
+                                 net_exch_sessions_work, &es_args);
+        sess_rc = es_args.rc;
+        new_sess = es_args.new_sess;
+    }
 
     /* Step 2: Summary exchange */
     if (sess_rc == 0) {
-        draw_message_screen("Syncing...", "Syncing app list...");
-        app_rc = net_exchange_summaries(&net_ctx, pld, &new_apps);
+        NetExchSummariesArgs ea_args = { &net_ctx, pld, 0, -1 };
+        run_loading_with_spinner("Syncing...", "Syncing app list...",
+                                 net_exch_summaries_work, &ea_args);
+        app_rc = ea_args.rc;
+        new_apps = ea_args.new_apps;
     }
 
     /* Step 3: Title name exchange (best-effort) */
     if (sess_rc == 0 && app_rc == 0) {
-        draw_message_screen("Syncing...", "Exchanging title names...");
-        if (net_exchange_title_names(&net_ctx) == 0)
-            title_names_save();
+        NetExchNamesArgs en_args = { &net_ctx, -1 };
+        run_loading_with_spinner("Syncing...", "Exchanging title names...",
+                                 net_exch_names_work, &en_args);
     }
 
     /* Step 4: Recompute total_secs per title from merged session log */
@@ -1415,22 +1726,17 @@ int main(void)
     gfxInitDefault();
     ui_init();
     fsInit();
+    APT_SetAppCpuTimeLimit(30);  /* Allow worker threads on core 1 */
 
-    /* Show loading screen while opening archive */
-    draw_message_screen("Activity Log++", "Opening save archive...");
-
-    /* Try each region's Activity Log save ID until one opens. */
-    FS_Archive archive = 0;
-    Result rc = -1;
-    for (int i = 0; i < 4; i++) {
-        rc = pld_open_archive(&archive, region_ids[i]);
-        if (R_SUCCEEDED(rc)) break;
-    }
-    if (R_FAILED(rc)) {
+    /* Step 1: Open save archive */
+    OpenArchiveArgs oa_args = { region_ids, 4, 0, -1 };
+    run_with_spinner("Activity Log++", "Opening save archive...", 1, 7,
+                     open_archive_work, &oa_args);
+    if (R_FAILED(oa_args.rc)) {
         char err_body[96];
         snprintf(err_body, sizeof(err_body),
                  "Error: 0x%08lX\n\nIs CFW active and Activity Log used?\n\nPress START to exit.",
-                 rc);
+                 oa_args.rc);
         while (aptMainLoop()) {
             hidScanInput();
             if (hidKeysDown() & KEY_START) break;
@@ -1442,33 +1748,33 @@ int main(void)
         return 1;
     }
 
-    draw_message_screen("Activity Log++", "Reading pld.dat...");
-
+    /* Step 2: Read summary + sessions */
     PldFile pld;
-    rc = pld_read_summary(archive, &pld);
-    if (R_FAILED(rc)) {
-        FSUSER_CloseArchive(archive);
-        char err_body[80];
-        snprintf(err_body, sizeof(err_body),
-                 "Error reading summary: 0x%08lX\n\nPress START to exit.", rc);
-        while (aptMainLoop()) {
-            hidScanInput();
-            if (hidKeysDown() & KEY_START) break;
-            draw_message_screen("Error", err_body);
-        }
-        ui_fini();
-        fsExit();
-        gfxExit();
-        return 1;
-    }
-
     PldSessionLog sessions;
-    rc = pld_read_sessions(archive, &sessions);
-    if (R_FAILED(rc)) {
-        FSUSER_CloseArchive(archive);
+    ReadPldArgs rp_args = { oa_args.archive, &pld, &sessions, -1, -1 };
+    run_with_spinner("Activity Log++", "Reading pld.dat...", 2, 7,
+                     read_pld_work, &rp_args);
+    FSUSER_CloseArchive(oa_args.archive);
+    if (R_FAILED(rp_args.rc_summary)) {
         char err_body[80];
         snprintf(err_body, sizeof(err_body),
-                 "Error reading sessions: 0x%08lX\n\nPress START to exit.", rc);
+                 "Error reading summary: 0x%08lX\n\nPress START to exit.",
+                 rp_args.rc_summary);
+        while (aptMainLoop()) {
+            hidScanInput();
+            if (hidKeysDown() & KEY_START) break;
+            draw_message_screen("Error", err_body);
+        }
+        ui_fini();
+        fsExit();
+        gfxExit();
+        return 1;
+    }
+    if (R_FAILED(rp_args.rc_sessions)) {
+        char err_body[80];
+        snprintf(err_body, sizeof(err_body),
+                 "Error reading sessions: 0x%08lX\n\nPress START to exit.",
+                 rp_args.rc_sessions);
         while (aptMainLoop()) {
             hidScanInput();
             if (hidKeysDown() & KEY_START) break;
@@ -1480,42 +1786,22 @@ int main(void)
         return 1;
     }
 
-    FSUSER_CloseArchive(archive);
-
-    /* ── M9: Load SD merged.dat and add-only merge into NAND data ── */
-    draw_message_screen("Activity Log++", "Loading merged data...");
-    {
-        PldFile       sd_pld;
-        PldSessionLog sd_sessions = {NULL, 0};
-        mkdir(PLD_BACKUP_DIR, 0777);
-        if (R_SUCCEEDED(pld_read_sd(PLD_MERGED_PATH, &sd_pld, &sd_sessions))) {
-            pld_merge_sessions(&sessions, &sd_sessions, true);
-            pld_merge_summaries(&pld, sd_pld.summaries, sd_pld.summary_count, true);
-            pld_sessions_free(&sd_sessions);
-            /* Recompute total_secs from merged session log */
-            for (int i = 0; i < PLD_SUMMARY_COUNT; i++) {
-                PldSummary *s = &pld.summaries[i];
-                if (pld_summary_is_empty(s)) continue;
-                s->total_secs = 0;
-                for (int j = 0; j < sessions.count; j++)
-                    if (sessions.entries[j].title_id == s->title_id)
-                        s->total_secs += sessions.entries[j].play_secs;
-            }
-        }
-        /* Write/update merged.dat (creates it fresh if it didn't exist) */
-        pld_write_sd(PLD_MERGED_PATH, &pld, &sessions);
-    }
+    /* Step 3: Load SD merged.dat and add-only merge into NAND data */
+    MergeArgs merge_args = { &pld, &sessions };
+    run_with_spinner("Activity Log++", "Loading merged data...", 3, 7,
+                     merge_work, &merge_args);
 
     u32 sync_count = load_sync_count();
 
-    /* ── M12: Load persisted title names, then scan installed titles ── */
-    draw_message_screen("Activity Log++", "Loading title names...");
-    title_names_load();
-    draw_message_screen("Activity Log++", "Scanning installed titles...");
-    {
-        int new_names = title_names_scan_installed();
-        if (new_names > 0) title_names_save();
-    }
+    /* Step 4: Load persisted title names */
+    run_with_spinner("Activity Log++", "Loading title names...", 4, 7,
+                     title_names_load_work, NULL);
+
+    /* Step 5: Scan installed titles */
+    ScanNamesArgs sn_args = { 0 };
+    run_with_spinner("Activity Log++", "Scanning installed titles...", 5, 7,
+                     scan_names_work, &sn_args);
+
     /* Build valid[] before icon fetch so fetch knows which titles need icons */
     const PldSummary *valid[PLD_SUMMARY_COUNT];
     bool show_system  = false;  /* L key toggles; default = games only */
@@ -1524,11 +1810,14 @@ int main(void)
     int n = collect_valid(&pld, valid, show_system, show_unknown);
     sort_valid(valid, n, sort_mode, &sessions, &pld);
 
-    draw_message_screen("Activity Log++", "Loading icon cache...");
-    title_icons_load_sd_cache();
+    /* Step 6: Load icon cache */
+    run_with_spinner("Activity Log++", "Loading icon cache...", 6, 7,
+                     title_icons_load_work, NULL);
 
-    draw_message_screen("Activity Log++", "Fetching missing icons...");
-    icon_fetch_missing(valid, n);
+    /* Step 7: Fetch missing icons */
+    IconFetchArgs if_args = { valid, n };
+    run_with_spinner("Activity Log++", "Fetching missing icons (this may take a moment)...", 7, 7,
+                     icon_fetch_work, &if_args);
 
     int sel        = 0;   /* currently highlighted entry index */
     int scroll_top = 0;   /* index of first visible row        */
@@ -1730,8 +2019,12 @@ int main(void)
                         sort_valid(valid, n, sort_mode, &sessions, &pld);
                         /* Fetch icons for any titles that arrived from the
                          * sync partner and aren't already in the store. */
-                        draw_message_screen("Activity Log++", "Fetching missing icons...");
-                        icon_fetch_missing(valid, n);
+                        {
+                            IconFetchArgs psif_args = { valid, n };
+                            run_loading_with_spinner("Activity Log++",
+                                "Fetching missing icons (this may take a moment)...",
+                                icon_fetch_work, &psif_args);
+                        }
                         sel = 0; scroll_top = 0; scroll_y = 0.0f;
                         list_anim_frame = 0;
                         menu_open = false;
@@ -1866,48 +2159,27 @@ int main(void)
                                 }
                             }
                             if (rst_confirmed) {
-                                draw_message_screen("Activity Log++", "Re-reading NAND data...");
-                                FS_Archive rst_archive = 0;
-                                Result rst_rc = -1;
-                                for (int i = 0; i < 4; i++) {
-                                    rst_rc = pld_open_archive(&rst_archive, region_ids[i]);
-                                    if (R_SUCCEEDED(rst_rc)) break;
-                                }
-                                if (R_SUCCEEDED(rst_rc)) {
-                                    PldFile rst_pld;
-                                    rst_rc = pld_read_summary(rst_archive, &rst_pld);
-                                    if (R_SUCCEEDED(rst_rc)) {
-                                        PldSessionLog rst_sessions = {NULL, 0};
-                                        rst_rc = pld_read_sessions(rst_archive, &rst_sessions);
-                                        FSUSER_CloseArchive(rst_archive);
-                                        if (R_SUCCEEDED(rst_rc)) {
-                                            pld_backup_from_path(PLD_MERGED_PATH);
-                                            rst_rc = pld_write_sd(PLD_MERGED_PATH, &rst_pld, &rst_sessions);
-                                        }
-                                        if (R_SUCCEEDED(rst_rc)) {
-                                            pld_sessions_free(&sessions);
-                                            pld      = rst_pld;
-                                            sessions = rst_sessions;
-                                            n = collect_valid(&pld, valid, show_system, show_unknown);
-                                            sort_valid(valid, n, sort_mode, &sessions, &pld);
-                                            sel = 0; scroll_top = 0; scroll_y = 0.0f;
-                                            list_anim_frame = 0;
-                                            sync_count = 0;
-                                            save_sync_count(0);
-                                            snprintf(status_msg, sizeof(status_msg), "Reset to local data");
-                                        } else {
-                                            pld_sessions_free(&rst_sessions);
-                                            snprintf(status_msg, sizeof(status_msg),
-                                                     "Reset failed: 0x%08lX", rst_rc);
-                                        }
-                                    } else {
-                                        FSUSER_CloseArchive(rst_archive);
-                                        snprintf(status_msg, sizeof(status_msg),
-                                                 "Reset failed: 0x%08lX", rst_rc);
-                                    }
+                                ResetReadArgs rr_args;
+                                memset(&rr_args, 0, sizeof(rr_args));
+                                rr_args.region_ids = region_ids;
+                                rr_args.region_count = 4;
+                                rr_args.rc = -1;
+                                run_loading_with_spinner("Activity Log++", "Re-reading NAND data...",
+                                                         reset_read_work, &rr_args);
+                                if (R_SUCCEEDED(rr_args.rc)) {
+                                    pld_sessions_free(&sessions);
+                                    pld      = rr_args.pld;
+                                    sessions = rr_args.sessions;
+                                    n = collect_valid(&pld, valid, show_system, show_unknown);
+                                    sort_valid(valid, n, sort_mode, &sessions, &pld);
+                                    sel = 0; scroll_top = 0; scroll_y = 0.0f;
+                                    list_anim_frame = 0;
+                                    sync_count = 0;
+                                    save_sync_count(0);
+                                    snprintf(status_msg, sizeof(status_msg), "Reset to local data");
                                 } else {
                                     snprintf(status_msg, sizeof(status_msg),
-                                             "Reset failed: 0x%08lX", rst_rc);
+                                             "Reset failed: 0x%08lX", rr_args.rc);
                                 }
                             }
                         }

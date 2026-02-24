@@ -1,4 +1,5 @@
 #include "ui.h"
+#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -85,6 +86,22 @@ void ui_draw_image_alpha(C2D_Image img, float x, float y, float size, u8 alpha) 
 void ui_draw_triangle(float x0, float y0, float x1, float y1,
                       float x2, float y2, u32 color) {
     C2D_DrawTriangle(x0, y0, color, x1, y1, color, x2, y2, color, 0.5f);
+}
+
+void ui_draw_circle(float cx, float cy, float r, u32 color) {
+    float step = 10.0f * 3.14159265f / 180.0f; /* ~10 degrees */
+    float angle = 0.0f;
+    float end = 2.0f * 3.14159265f;
+    while (angle < end - 0.001f) {
+        float next = angle + step;
+        if (next > end) next = end;
+        float x0 = cx + r * cosf(angle);
+        float y0 = cy + r * sinf(angle);
+        float x1 = cx + r * cosf(next);
+        float y1 = cy + r * sinf(next);
+        C2D_DrawTriangle(cx, cy, color, x0, y0, color, x1, y1, color, 0.5f);
+        angle = next;
+    }
 }
 
 float ui_text_width(const char *str, float scale) {
