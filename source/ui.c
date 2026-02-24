@@ -74,6 +74,14 @@ void ui_draw_image(C2D_Image img, float x, float y, float size) {
     C2D_DrawImageAt(img, x, y, 0.5f, NULL, sx, sy);
 }
 
+void ui_draw_image_alpha(C2D_Image img, float x, float y, float size, u8 alpha) {
+    float sx = size / (float)img.subtex->width;
+    float sy = size / (float)img.subtex->height;
+    C2D_ImageTint tint;
+    C2D_PlainImageTint(&tint, C2D_Color32(0xFF, 0xFF, 0xFF, alpha), 0.0f);
+    C2D_DrawImageAt(img, x, y, 0.5f, &tint, sx, sy);
+}
+
 void ui_draw_triangle(float x0, float y0, float x1, float y1,
                       float x2, float y2, u32 color) {
     C2D_DrawTriangle(x0, y0, color, x1, y1, color, x2, y2, color, 0.5f);

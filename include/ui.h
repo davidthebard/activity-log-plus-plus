@@ -52,6 +52,7 @@ void ui_draw_text_right(float x, float y, float scale, u32 color, const char *st
 void ui_draw_textf(float x, float y, float scale, u32 color,
                    const char *fmt, ...) __attribute__((format(printf, 5, 6)));
 void ui_draw_image(C2D_Image img, float x, float y, float size);
+void ui_draw_image_alpha(C2D_Image img, float x, float y, float size, u8 alpha);
 void ui_draw_triangle(float x0, float y0, float x1, float y1,
                       float x2, float y2, u32 color);
 

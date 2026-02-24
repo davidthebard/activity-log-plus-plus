@@ -348,10 +348,11 @@ static void render_pie_top(const PieSlice slices[], int slice_count, u32 total,
         return;
     }
 
-    /* Pie chart on left side — sweep in over anim_t */
+    /* Pie chart on left side — sweep in over anim_t (complete by t=1) */
     float cx = 110.0f, cy = 132.0f, r = 80.0f;
     float angle = -((float)M_PI / 2.0f); /* start at 12 o'clock */
-    float max_sweep = anim_t * 2.0f * (float)M_PI;
+    float pie_t = (anim_t > 1.0f) ? 1.0f : anim_t;
+    float max_sweep = pie_t * 2.0f * (float)M_PI;
     float cumulative = 0.0f;
     for (int i = 0; i < slice_count; i++) {
         float sweep = slices[i].pct * 2.0f * (float)M_PI;
@@ -365,23 +366,21 @@ static void render_pie_top(const PieSlice slices[], int slice_count, u32 total,
         cumulative += sweep;
     }
 
-    /* Legend on right side — staggered fade-in */
-    float lx = 210.0f, ly = 30.0f;
+    /* Legend on right side — staggered cascade fade-in + slide */
+    float lx = 210.0f, ly_base = 30.0f;
     char fallback[32];
-    float legend_cumul = 0.0f;
     for (int i = 0; i < slice_count; i++) {
-        float sweep = slices[i].pct;
-        /* Compute how revealed this slice is (0..1) */
-        float slice_start = legend_cumul;
-        float slice_end   = legend_cumul + sweep;
-        legend_cumul = slice_end;
-
-        if (slice_start >= anim_t) continue; /* not yet visible */
-        float reveal = (anim_t >= slice_end) ? 1.0f
-                       : (anim_t - slice_start) / sweep;
-        if (reveal < 0.0f) reveal = 0.0f;
-        if (reveal > 1.0f) reveal = 1.0f;
+        /* Per-row cascade fade + vertical slide */
+        float stagger = 0.24f;
+        float fade_len = 0.30f;
+        float row_start = (float)i * stagger;
+        float reveal = (anim_t <= row_start) ? 0.0f
+                     : (anim_t >= row_start + fade_len) ? 1.0f
+                     : (anim_t - row_start) / fade_len;
         u8 alpha = (u8)(reveal * 255.0f);
+        if (alpha == 0) continue;
+        float y_off = (1.0f - reveal) * -8.0f;
+        float ly = ly_base + (float)i * 18.0f + y_off;
 
         u32 col      = pie_colors[i];
         u32 col_a    = (col & 0x00FFFFFF) | ((u32)alpha << 24);
@@ -409,7 +408,6 @@ static void render_pie_top(const PieSlice slices[], int slice_count, u32 total,
         ui_draw_text_right(396, ly, UI_SCALE_SM, txt_col, pct_str);
         ui_draw_text_trunc(lx + 14, ly, UI_SCALE_SM, txt_col, name,
                            396 - pct_w - 4 - (lx + 14));
-        ly += 18.0f;
     }
 
     /* Status bar */
@@ -431,22 +429,23 @@ static void render_pie_bot(const PieSlice slices[], int slice_count, u32 total,
 
     /* Detailed breakdown — shrink row height to fit up to 9 slices + total */
     float row_h = 18.0f;
-    float y = 28.0f;
+    float y_base = 28.0f;
+    float y_last = y_base; /* tracks final y for divider placement */
     char fallback[32];
     char t_buf[20];
-    float legend_cumul = 0.0f;
     for (int i = 0; i < slice_count; i++) {
-        float sweep = slices[i].pct;
-        float slice_start = legend_cumul;
-        float slice_end   = legend_cumul + sweep;
-        legend_cumul = slice_end;
-
-        if (slice_start >= anim_t) continue;
-        float reveal = (anim_t >= slice_end) ? 1.0f
-                       : (anim_t - slice_start) / sweep;
-        if (reveal < 0.0f) reveal = 0.0f;
-        if (reveal > 1.0f) reveal = 1.0f;
+        /* Per-row cascade fade + vertical slide */
+        float stagger = 0.24f;
+        float fade_len = 0.30f;
+        float row_start = (float)i * stagger;
+        float reveal = (anim_t <= row_start) ? 0.0f
+                     : (anim_t >= row_start + fade_len) ? 1.0f
+                     : (anim_t - row_start) / fade_len;
         u8 alpha = (u8)(reveal * 255.0f);
+        y_last = y_base + (float)(i + 1) * row_h;
+        if (alpha == 0) continue;
+        float y_off = (1.0f - reveal) * -8.0f;
+        float y = y_base + (float)i * row_h + y_off;
 
         u32 col_a    = (pie_colors[i] & 0x00FFFFFF) | ((u32)alpha << 24);
         u32 txt_col  = (UI_COL_TEXT & 0x00FFFFFF) | ((u32)alpha << 24);
@@ -477,10 +476,10 @@ static void render_pie_bot(const PieSlice slices[], int slice_count, u32 total,
         ui_draw_text_trunc(20, y, UI_SCALE_SM, txt_col, name,
                            (UI_BOT_W - 8) - detail_w - 4 - 20);
         ui_draw_text_right(UI_BOT_W - 8, y, UI_SCALE_SM, dim_col, detail);
-        y += row_h;
     }
 
     /* Divider + Total — placed after last row */
+    float y = y_last;
     y += 2.0f;
     ui_draw_rect(0, y, UI_BOT_W, 1, UI_COL_DIVIDER);
     y += 4.0f;
@@ -517,24 +516,22 @@ static void render_bar_top(const PieSlice slices[], int slice_count, u32 total,
 
     float bar_max_w = 200.0f;
     float row_h = 20.0f;
-    float y = (float)UI_HEADER_H + 4.0f;
+    float y_base = (float)UI_HEADER_H + 4.0f;
     char fallback[32];
     char t_buf[20];
 
-    float legend_cumul = 0.0f;
     for (int i = 0; i < slice_count; i++) {
-        /* Staggered fade-in based on slice proportion */
-        float sweep = slices[i].pct;
-        float slice_start = legend_cumul;
-        float slice_end   = legend_cumul + sweep;
-        legend_cumul = slice_end;
-
-        float reveal = (slice_start >= anim_t) ? 0.0f
-                       : (anim_t >= slice_end) ? 1.0f
-                       : (anim_t - slice_start) / sweep;
-        if (reveal < 0.0f) reveal = 0.0f;
-        if (reveal > 1.0f) reveal = 1.0f;
+        /* Per-row cascade fade + vertical slide */
+        float stagger = 0.24f;
+        float fade_len = 0.30f;
+        float row_start = (float)i * stagger;
+        float reveal = (anim_t <= row_start) ? 0.0f
+                     : (anim_t >= row_start + fade_len) ? 1.0f
+                     : (anim_t - row_start) / fade_len;
         u8 alpha = (u8)(reveal * 255.0f);
+        if (alpha == 0) continue;
+        float y_off = (1.0f - reveal) * -8.0f;
+        float y = y_base + (float)i * row_h + y_off;
 
         u32 bar_col = (pie_colors[i] & 0x00FFFFFF) | ((u32)alpha << 24);
         u32 txt_col = (UI_COL_TEXT & 0x00FFFFFF) | ((u32)alpha << 24);
@@ -557,8 +554,8 @@ static void render_bar_top(const PieSlice slices[], int slice_count, u32 total,
         float bar_w = (max_secs > 0)
                       ? (float)slices[i].secs / (float)max_secs * bar_max_w
                       : 0.0f;
-        bar_w *= anim_t;
-        if (bar_w < 2.0f && slices[i].secs > 0 && anim_t > 0.0f) bar_w = 2.0f;
+        bar_w *= reveal;
+        if (bar_w < 2.0f && slices[i].secs > 0 && reveal > 0.0f) bar_w = 2.0f;
         ui_draw_rect(8, y + 2, bar_w, 14, bar_col);
 
         /* Time right-aligned */
@@ -569,8 +566,6 @@ static void render_bar_top(const PieSlice slices[], int slice_count, u32 total,
         /* Name to the right of the bar, truncated to avoid overlapping time */
         ui_draw_text_trunc(bar_max_w + 16, y + 1, UI_SCALE_SM, txt_col, name,
                            396 - time_w - 4 - (bar_max_w + 16));
-
-        y += row_h;
     }
 
     /* Status bar */
@@ -705,7 +700,7 @@ static void render_game_list(const PldSummary *const valid[], int n,
                              const PldSessionLog *sessions,
                              const char *status_msg,
                              bool show_system, bool show_unknown,
-                             SortMode sort_mode)
+                             SortMode sort_mode, float anim_t)
 {
     /* Visible rows (drawn first so header paints over any overlap) */
     char t_buf[20];
@@ -722,9 +717,23 @@ static void render_game_list(const PldSummary *const valid[], int n,
         float row_y = UI_LIST_Y + (float)i * UI_ROW_H - scroll_y;
         if (row_y + UI_ROW_H < UI_LIST_Y || row_y >= UI_LIST_BOT) continue;
 
+        /* Per-row cascade fade + vertical slide */
+        int vis_row = i - first_vis;
+        float stagger = 0.24f;
+        float fade_len = 0.30f;
+        float row_start = (float)vis_row * stagger;
+        float reveal = (anim_t <= row_start) ? 0.0f
+                     : (anim_t >= row_start + fade_len) ? 1.0f
+                     : (anim_t - row_start) / fade_len;
+        u8 alpha = (u8)(reveal * 255.0f);
+        if (alpha == 0) continue;
+        float y_off = (1.0f - reveal) * -8.0f;
+        row_y += y_off;
+
         u32 bg = (i == sel) ? UI_COL_ROW_SEL :
                  (i % 2 == 0) ? UI_COL_BG : UI_COL_ROW_ALT;
-        ui_draw_rect(0, row_y, UI_TOP_W, UI_ROW_H, bg);
+        ui_draw_rect(0, row_y, UI_TOP_W, UI_ROW_H,
+                     (bg & 0x00FFFFFF) | ((u32)alpha << 24));
 
         const PldSummary *s = valid[i];
 
@@ -744,7 +753,10 @@ static void render_game_list(const PldSummary *const valid[], int n,
 
         C2D_Image icon;
         if (title_icon_get(s->title_id, &icon)) {
-            ui_draw_image(icon, 6.0f, row_y, ICON_DRAW_SIZE);
+            if (alpha == 255)
+                ui_draw_image(icon, 6.0f, row_y, ICON_DRAW_SIZE);
+            else
+                ui_draw_image_alpha(icon, 6.0f, row_y, ICON_DRAW_SIZE, alpha);
         } else {
             /* Letter-initial fallback: colored square with the first letter */
             const u32 kIconColors[] = {
@@ -758,14 +770,18 @@ static void render_game_list(const PldSummary *const valid[], int n,
                 C2D_Color32(0xC8, 0x4A, 0x4A, 0xFF),  /* red           */
             };
             u32 icon_col = kIconColors[(s->title_id >> 8) % 8];
-            ui_draw_rect(6.0f, row_y, (float)ICON_DRAW_SIZE, (float)ICON_DRAW_SIZE, icon_col);
+            ui_draw_rect(6.0f, row_y, (float)ICON_DRAW_SIZE, (float)ICON_DRAW_SIZE,
+                         (icon_col & 0x00FFFFFF) | ((u32)alpha << 24));
             char letter[2] = { name[0] ? name[0] : '?', '\0' };
-            ui_draw_text(18.0f, row_y + 14.0f, UI_SCALE_LG, 0xFFFFFFFF, letter);
+            ui_draw_text(18.0f, row_y + 14.0f, UI_SCALE_LG,
+                         (0xFFFFFFFF & 0x00FFFFFF) | ((u32)alpha << 24), letter);
         }
 
-        ui_draw_text(60.0f, row_y + 8, UI_SCALE_LG, UI_COL_TEXT, name);
-        ui_draw_text_right(394, row_y + 8, UI_SCALE_LG, UI_COL_TEXT_DIM, t_buf);
-        ui_draw_textf(60.0f, row_y + 28, UI_SCALE_SM, UI_COL_TEXT_DIM,
+        u32 text_col     = (UI_COL_TEXT     & 0x00FFFFFF) | ((u32)alpha << 24);
+        u32 text_dim_col = (UI_COL_TEXT_DIM & 0x00FFFFFF) | ((u32)alpha << 24);
+        ui_draw_text(60.0f, row_y + 8, UI_SCALE_LG, text_col, name);
+        ui_draw_text_right(394, row_y + 8, UI_SCALE_LG, text_dim_col, t_buf);
+        ui_draw_textf(60.0f, row_y + 28, UI_SCALE_SM, text_dim_col,
                       "L:%u  S:%d  %s-%s",
                       (unsigned)s->launch_count, sess_count, d0_buf, d1_buf);
     }
@@ -867,7 +883,8 @@ static void render_bottom_stats(const PldSummary *valid[], int n,
 
 static void render_rankings_top(const PldSummary *ranked[], int rank_count,
                                 int rank_sel, int rank_scroll,
-                                const int rank_sess[], RankingsTab tab)
+                                const int rank_sess[], RankingsTab tab,
+                                float anim_t)
 {
     /* Header bar */
     ui_draw_rect(0, 0, UI_TOP_W, UI_HEADER_H, UI_COL_HEADER);
@@ -896,10 +913,24 @@ static void render_rankings_top(const PldSummary *ranked[], int rank_count,
         float row_y = UI_LIST_Y + (float)(i - rank_scroll) * UI_ROW_H;
         const PldSummary *s = ranked[i];
 
+        /* Per-row cascade fade + vertical slide */
+        int vis_row = i - rank_scroll;
+        float stagger = 0.24f;
+        float fade_len = 0.30f;
+        float row_start = (float)vis_row * stagger;
+        float reveal = (anim_t <= row_start) ? 0.0f
+                     : (anim_t >= row_start + fade_len) ? 1.0f
+                     : (anim_t - row_start) / fade_len;
+        u8 alpha = (u8)(reveal * 255.0f);
+        if (alpha == 0) continue;
+        float y_off = (1.0f - reveal) * -8.0f;
+        row_y += y_off;
+
         /* Row background */
         u32 bg = (i == rank_sel) ? UI_COL_ROW_SEL :
                  (i % 2 == 0) ? UI_COL_BG : UI_COL_ROW_ALT;
-        ui_draw_rect(0, row_y, UI_TOP_W, UI_ROW_H, bg);
+        ui_draw_rect(0, row_y, UI_TOP_W, UI_ROW_H,
+                     (bg & 0x00FFFFFF) | ((u32)alpha << 24));
 
         /* Proportional bar (semi-transparent blue behind row) */
         u32 val = 0;
@@ -913,18 +944,26 @@ static void render_rankings_top(const PldSummary *ranked[], int rank_count,
         float bar_max_w = UI_TOP_W - 4.0f;
         float bar_w = bar_max_w * ((float)val / (float)max_val);
         if (bar_w < 2.0f) bar_w = 2.0f;
-        u32 bar_col = C2D_Color32(0x4A, 0x86, 0xC8, 0x30); /* semi-transparent blue */
+        u8 bar_base_alpha = 0x30;
+        u8 bar_alpha = (u8)((u32)bar_base_alpha * alpha / 255);
+        u32 bar_col = C2D_Color32(0x4A, 0x86, 0xC8, bar_alpha);
         ui_draw_rect(2.0f, row_y + 1.0f, bar_w, UI_ROW_H - 2.0f, bar_col);
+
+        u32 text_col     = (UI_COL_TEXT     & 0x00FFFFFF) | ((u32)alpha << 24);
+        u32 text_dim_col = (UI_COL_TEXT_DIM & 0x00FFFFFF) | ((u32)alpha << 24);
 
         /* Rank number */
         char rank_num[16];
         snprintf(rank_num, sizeof(rank_num), "#%d", i + 1);
-        ui_draw_text(4.0f, row_y + 16.0f, UI_SCALE_SM, UI_COL_TEXT_DIM, rank_num);
+        ui_draw_text(4.0f, row_y + 16.0f, UI_SCALE_SM, text_dim_col, rank_num);
 
         /* Icon */
         C2D_Image icon;
         if (title_icon_get(s->title_id, &icon)) {
-            ui_draw_image(icon, 28.0f, row_y, ICON_DRAW_SIZE);
+            if (alpha == 255)
+                ui_draw_image(icon, 28.0f, row_y, ICON_DRAW_SIZE);
+            else
+                ui_draw_image_alpha(icon, 28.0f, row_y, ICON_DRAW_SIZE, alpha);
         } else {
             const char *name_tmp = title_name_lookup(s->title_id);
             if (!name_tmp) name_tmp = title_db_lookup(s->title_id);
@@ -940,8 +979,10 @@ static void render_rankings_top(const PldSummary *ranked[], int rank_count,
                 C2D_Color32(0xC8, 0x4A, 0x4A, 0xFF),
             };
             u32 icon_col = kIconColors[(s->title_id >> 8) % 8];
-            ui_draw_rect(28.0f, row_y, (float)ICON_DRAW_SIZE, (float)ICON_DRAW_SIZE, icon_col);
-            ui_draw_text(40.0f, row_y + 14.0f, UI_SCALE_LG, 0xFFFFFFFF, letter);
+            ui_draw_rect(28.0f, row_y, (float)ICON_DRAW_SIZE, (float)ICON_DRAW_SIZE,
+                         (icon_col & 0x00FFFFFF) | ((u32)alpha << 24));
+            ui_draw_text(40.0f, row_y + 14.0f, UI_SCALE_LG,
+                         (0xFFFFFFFF & 0x00FFFFFF) | ((u32)alpha << 24), letter);
         }
 
         /* Name */
@@ -952,7 +993,7 @@ static void render_rankings_top(const PldSummary *ranked[], int rank_count,
                      (unsigned long long)s->title_id);
             name = fallback;
         }
-        ui_draw_text(82.0f, row_y + 8, UI_SCALE_LG, UI_COL_TEXT, name);
+        ui_draw_text(82.0f, row_y + 8, UI_SCALE_LG, text_col, name);
 
         /* Metric value right-aligned */
         char metric[24];
@@ -973,13 +1014,13 @@ static void render_rankings_top(const PldSummary *ranked[], int rank_count,
                 metric[0] = '\0';
                 break;
         }
-        ui_draw_text_right(394, row_y + 8, UI_SCALE_LG, UI_COL_TEXT_DIM, metric);
+        ui_draw_text_right(394, row_y + 8, UI_SCALE_LG, text_dim_col, metric);
 
         /* Secondary line */
         pld_fmt_time(s->total_secs, t_buf, sizeof(t_buf));
         pld_fmt_date(s->first_played_days, d0_buf, sizeof(d0_buf));
         pld_fmt_date(s->last_played_days,  d1_buf, sizeof(d1_buf));
-        ui_draw_textf(82.0f, row_y + 28, UI_SCALE_SM, UI_COL_TEXT_DIM,
+        ui_draw_textf(82.0f, row_y + 28, UI_SCALE_SM, text_dim_col,
                       "L:%u  S:%d  %s-%s",
                       (unsigned)s->launch_count, rank_sess[i], d0_buf, d1_buf);
     }
@@ -1506,6 +1547,8 @@ int main(void)
     int  pie_count = 0;
     u32  pie_total = 0;
     int  chart_anim_frame = 0;
+    int  list_anim_frame  = 0;
+    int  rank_anim_frame  = 0;
 
     /* Rankings state */
     bool rankings_view = false;
@@ -1528,6 +1571,7 @@ int main(void)
             /* ── Charts view (tabbed: pie / bar) ── */
             if (keys & KEY_B) {
                 charts_view = false;
+                list_anim_frame = 0;
             } else if (keys & KEY_L) {
                 chart_tab = (chart_tab + CHART_TAB_COUNT - 1) % CHART_TAB_COUNT;
                 chart_anim_frame = 0;
@@ -1536,8 +1580,8 @@ int main(void)
                 chart_anim_frame = 0;
             }
 
-            float anim_t = (float)chart_anim_frame / 20.0f;
-            if (anim_t > 1.0f) anim_t = 1.0f;
+            float anim_t = (float)chart_anim_frame / 40.0f;
+            if (anim_t > 3.0f) anim_t = 3.0f;
             chart_anim_frame++;
 
             ui_begin_frame();
@@ -1553,16 +1597,19 @@ int main(void)
             /* ── Rankings view ── */
             if (keys & KEY_B) {
                 rankings_view = false;
+                list_anim_frame = 0;
             } else if (keys & KEY_L) {
                 rank_tab = (rank_tab + RANK_TAB_COUNT - 1) % RANK_TAB_COUNT;
                 rank_count = build_rankings(valid, n, rank_tab, &sessions, &pld,
                                             ranked, rank_sess);
                 rank_sel = 0; rank_scroll = 0;
+                rank_anim_frame = 0;
             } else if (keys & KEY_R) {
                 rank_tab = (rank_tab + 1) % RANK_TAB_COUNT;
                 rank_count = build_rankings(valid, n, rank_tab, &sessions, &pld,
                                             ranked, rank_sess);
                 rank_sel = 0; rank_scroll = 0;
+                rank_anim_frame = 0;
             }
 
             /* Navigation with hold-to-repeat */
@@ -1644,10 +1691,14 @@ int main(void)
             }
 
             /* Render rankings */
+            float rank_anim_t = (float)rank_anim_frame / 40.0f;
+            if (rank_anim_t > 2.0f) rank_anim_t = 2.0f;
+            rank_anim_frame++;
+
             ui_begin_frame();
             ui_target_top();
             render_rankings_top(ranked, rank_count, rank_sel, rank_scroll,
-                                rank_sess, rank_tab);
+                                rank_sess, rank_tab, rank_anim_t);
             ui_target_bot();
             render_rankings_bot(ranked, rank_count, rank_sess, rank_tab);
             ui_end_frame();
@@ -1682,6 +1733,7 @@ int main(void)
                         draw_message_screen("Activity Log++", "Fetching missing icons...");
                         icon_fetch_missing(valid, n);
                         sel = 0; scroll_top = 0; scroll_y = 0.0f;
+                        list_anim_frame = 0;
                         menu_open = false;
                         break;
 
@@ -1748,6 +1800,7 @@ int main(void)
                                             n = collect_valid(&pld, valid, show_system, show_unknown);
                                             sort_valid(valid, n, sort_mode, &sessions, &pld);
                                             sel = 0; scroll_top = 0; scroll_y = 0.0f;
+                                            list_anim_frame = 0;
                                         } else {
                                             pld_sessions_free(&rst_sessions);
                                         }
@@ -1838,6 +1891,7 @@ int main(void)
                                             n = collect_valid(&pld, valid, show_system, show_unknown);
                                             sort_valid(valid, n, sort_mode, &sessions, &pld);
                                             sel = 0; scroll_top = 0; scroll_y = 0.0f;
+                                            list_anim_frame = 0;
                                             sync_count = 0;
                                             save_sync_count(0);
                                             snprintf(status_msg, sizeof(status_msg), "Reset to local data");
@@ -1876,6 +1930,7 @@ int main(void)
                 rankings_view = true;
                 rank_tab = RANK_PLAYTIME;
                 rank_sel = 0; rank_scroll = 0;
+                rank_anim_frame = 0;
                 rank_count = build_rankings(valid, n, rank_tab, &sessions, &pld,
                                             ranked, rank_sess);
             } else if (keys & KEY_Y) {
@@ -1891,16 +1946,19 @@ int main(void)
                 sort_valid(valid, n, sort_mode, &sessions, &pld);
                 sel = 0; scroll_top = 0; scroll_y = 0.0f;
                 status_msg[0] = '\0';
+                list_anim_frame = 0;
             } else if (keys & KEY_L) {
                 sort_mode = (sort_mode + SORT_COUNT - 1) % SORT_COUNT;
                 sort_valid(valid, n, sort_mode, &sessions, &pld);
                 sel = 0; scroll_top = 0; scroll_y = 0.0f;
                 status_msg[0] = '\0';
+                list_anim_frame = 0;
             } else if (keys & KEY_R) {
                 sort_mode = (sort_mode + 1) % SORT_COUNT;
                 sort_valid(valid, n, sort_mode, &sessions, &pld);
                 sel = 0; scroll_top = 0; scroll_y = 0.0f;
                 status_msg[0] = '\0';
+                list_anim_frame = 0;
             }
 
             /* Navigation with hold-to-repeat */
@@ -1991,10 +2049,14 @@ int main(void)
             if (scroll_y - scroll_target < 0.5f && scroll_y - scroll_target > -0.5f)
                 scroll_y = scroll_target;
 
+            float list_anim_t = (float)list_anim_frame / 40.0f;
+            if (list_anim_t > 2.0f) list_anim_t = 2.0f;
+            list_anim_frame++;
+
             ui_begin_frame();
             ui_target_top();
             render_game_list(valid, n, sel, scroll_y, &sessions, status_msg,
-                             show_system, show_unknown, sort_mode);
+                             show_system, show_unknown, sort_mode, list_anim_t);
             if (menu_open) render_menu(menu_sel);
             ui_target_bot();
             render_bottom_stats(valid, n, &sessions, sync_count);
