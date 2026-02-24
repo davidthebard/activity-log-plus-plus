@@ -369,8 +369,12 @@ static void render_pie_top(const PieSlice slices[], int slice_count, u32 total)
         }
 
         int pct_int = (int)(slices[i].pct * 100.0f + 0.5f);
-        ui_draw_textf(lx + 14, ly, UI_SCALE_SM, UI_COL_TEXT,
-                      "%s  %d%%", name, pct_int);
+        char pct_str[8];
+        snprintf(pct_str, sizeof(pct_str), "%d%%", pct_int);
+        float pct_w = ui_text_width(pct_str, UI_SCALE_SM);
+        ui_draw_text_right(396, ly, UI_SCALE_SM, UI_COL_TEXT, pct_str);
+        ui_draw_text_trunc(lx + 14, ly, UI_SCALE_SM, UI_COL_TEXT, name,
+                           396 - pct_w - 4 - (lx + 14));
         ly += 18.0f;
     }
 
@@ -415,9 +419,11 @@ static void render_pie_bot(const PieSlice slices[], int slice_count, u32 total)
         /* Colored dot */
         ui_draw_rect(8, y + 2, 8, 8, pie_colors[i]);
 
-        ui_draw_text(20, y, UI_SCALE_SM, UI_COL_TEXT, name);
         char detail[32];
         snprintf(detail, sizeof(detail), "%s  %d%%", t_buf, pct_int);
+        float detail_w = ui_text_width(detail, UI_SCALE_SM);
+        ui_draw_text_trunc(20, y, UI_SCALE_SM, UI_COL_TEXT, name,
+                           (UI_BOT_W - 8) - detail_w - 4 - 20);
         ui_draw_text_right(UI_BOT_W - 8, y, UI_SCALE_SM, UI_COL_TEXT_DIM, detail);
         y += row_h;
     }
@@ -484,12 +490,14 @@ static void render_bar_top(const PieSlice slices[], int slice_count, u32 total)
         if (bar_w < 2.0f && slices[i].secs > 0) bar_w = 2.0f;
         ui_draw_rect(8, y + 2, bar_w, 14, pie_colors[i]);
 
-        /* Name to the right of the bar */
-        ui_draw_text(bar_max_w + 16, y + 1, UI_SCALE_SM, UI_COL_TEXT, name);
-
         /* Time right-aligned */
         pld_fmt_time(slices[i].secs, t_buf, sizeof(t_buf));
+        float time_w = ui_text_width(t_buf, UI_SCALE_SM);
         ui_draw_text_right(396, y + 1, UI_SCALE_SM, UI_COL_TEXT_DIM, t_buf);
+
+        /* Name to the right of the bar, truncated to avoid overlapping time */
+        ui_draw_text_trunc(bar_max_w + 16, y + 1, UI_SCALE_SM, UI_COL_TEXT, name,
+                           396 - time_w - 4 - (bar_max_w + 16));
 
         y += row_h;
     }
@@ -705,17 +713,27 @@ static void render_game_list(const PldSummary *const valid[], int n,
                        "L/R:sort  Y:filter  X:rank");
 }
 
-static void render_bottom_stats(int n, const PldSessionLog *sessions,
+static void render_bottom_stats(const PldSummary *valid[], int n,
+                                const PldSessionLog *sessions,
                                 u32 sync_count)
 {
     /* Header */
     ui_draw_rect(0, 0, UI_BOT_W, UI_HEADER_H, UI_COL_HEADER);
     ui_draw_text(6, 4, UI_SCALE_HDR, UI_COL_HEADER_TXT, "Statistics");
 
-    /* Total playtime across all sessions */
+    /* Total playtime across all titles & find most played */
     u32 total_secs = 0;
-    for (int i = 0; i < sessions->count; i++)
-        total_secs += sessions->entries[i].play_secs;
+    u32 total_launches = 0;
+    int most_idx = -1;
+    u32 most_secs = 0;
+    for (int i = 0; i < n; i++) {
+        total_secs    += valid[i]->total_secs;
+        total_launches += valid[i]->launch_count;
+        if (valid[i]->total_secs > most_secs) {
+            most_secs = valid[i]->total_secs;
+            most_idx  = i;
+        }
+    }
     char t_buf[20];
     pld_fmt_time(total_secs, t_buf, sizeof(t_buf));
 
@@ -735,6 +753,26 @@ static void render_bottom_stats(int n, const PldSessionLog *sessions,
     ui_draw_text(8, y, UI_SCALE_LG, UI_COL_TEXT, "Syncs");
     snprintf(vbuf, sizeof(vbuf), "%lu", (unsigned long)sync_count);
     ui_draw_text_right(UI_BOT_W - 8, y, UI_SCALE_LG, UI_COL_TEXT_DIM, vbuf);
+    y += 24.0f;
+
+    ui_draw_text(8, y, UI_SCALE_LG, UI_COL_TEXT, "Total launches");
+    snprintf(vbuf, sizeof(vbuf), "%lu", (unsigned long)total_launches);
+    ui_draw_text_right(UI_BOT_W - 8, y, UI_SCALE_LG, UI_COL_TEXT_DIM, vbuf);
+    y += 24.0f;
+
+    ui_draw_text(8, y, UI_SCALE_LG, UI_COL_TEXT, "Total sessions");
+    snprintf(vbuf, sizeof(vbuf), "%d", sessions->count);
+    ui_draw_text_right(UI_BOT_W - 8, y, UI_SCALE_LG, UI_COL_TEXT_DIM, vbuf);
+    y += 24.0f;
+
+    ui_draw_text(8, y, UI_SCALE_LG, UI_COL_TEXT, "Most played");
+    if (most_idx >= 0) {
+        const char *name = title_name_lookup(valid[most_idx]->title_id);
+        if (!name) name = title_db_lookup(valid[most_idx]->title_id);
+        if (!name) name = "Unknown";
+        ui_draw_text_trunc(UI_BOT_W - 8 - 160, y, UI_SCALE_LG,
+                           UI_COL_TEXT_DIM, name, 160);
+    }
 
     /* Divider */
     ui_draw_rect(0, 180, UI_BOT_W, 1, UI_COL_DIVIDER);
@@ -1799,7 +1837,7 @@ int main(void)
                              show_system, show_unknown, sort_mode);
             if (menu_open) render_menu(menu_sel);
             ui_target_bot();
-            render_bottom_stats(n, &sessions, sync_count);
+            render_bottom_stats(valid, n, &sessions, sync_count);
             ui_end_frame();
         }
     }
