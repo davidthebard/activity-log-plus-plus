@@ -1506,8 +1506,8 @@ static void render_detail_bot(void)
 
 static void render_menu(int sel)
 {
-    static const char *items[] = { "Charts", "Sync", "Backup", "Restore", "Reset", "Quit" };
-    static const int   NITEMS  = 6;
+    static const char *items[] = { "Charts", "Sync", "Backup", "Export", "Restore", "Reset", "Quit" };
+    static const int   NITEMS  = 7;
 
     float mx     = 8.0f;
     float my     = 28.0f;
@@ -1530,6 +1530,112 @@ static void render_menu(int sel)
                  (i == sel) ? ">" : " ", items[i]);
         ui_draw_text(mx + 6, ry + 4, UI_SCALE_LG, col, label);
     }
+}
+
+/* ── CSV/JSON Export ────────────────────────────────────────────── */
+
+/* Escape a string for CSV: if it contains commas, quotes, or newlines,
+ * wrap in double-quotes and double any internal quotes. */
+static void csv_write_escaped(FILE *f, const char *s)
+{
+    bool needs_quote = false;
+    for (const char *p = s; *p; p++) {
+        if (*p == ',' || *p == '"' || *p == '\n') { needs_quote = true; break; }
+    }
+    if (!needs_quote) { fputs(s, f); return; }
+    fputc('"', f);
+    for (const char *p = s; *p; p++) {
+        if (*p == '"') fputc('"', f);
+        fputc(*p, f);
+    }
+    fputc('"', f);
+}
+
+/* Escape a string for JSON: escape backslash and double-quote. */
+static void json_write_escaped(FILE *f, const char *s)
+{
+    for (const char *p = s; *p; p++) {
+        if (*p == '"' || *p == '\\') fputc('\\', f);
+        fputc(*p, f);
+    }
+}
+
+static Result export_data(const PldFile *pld, const PldSessionLog *sessions)
+{
+    mkdir("sdmc:/3ds/activity-log-pp", 0755);
+
+    FILE *csv = fopen("sdmc:/3ds/activity-log-pp/export.csv", "w");
+    FILE *json = fopen("sdmc:/3ds/activity-log-pp/export.json", "w");
+    if (!csv || !json) {
+        if (csv) fclose(csv);
+        if (json) fclose(json);
+        return -1;
+    }
+
+    /* CSV header */
+    fputs("title_id,name,playtime_secs,playtime,launches,sessions,first_played,last_played\n", csv);
+
+    /* JSON opening */
+    fputs("{\n  \"titles\": [\n", json);
+
+    bool first_json = true;
+    for (int i = 0; i < PLD_SUMMARY_COUNT; i++) {
+        const PldSummary *s = &pld->summaries[i];
+        if (pld_summary_is_empty(s)) continue;
+
+        /* Title name lookup */
+        const char *name = title_name_lookup(s->title_id);
+        if (!name) name = title_db_lookup(s->title_id);
+        if (!name) name = "Unknown";
+
+        /* Format fields */
+        char time_buf[32], first_buf[16], last_buf[16];
+        pld_fmt_time(s->total_secs, time_buf, sizeof(time_buf));
+        pld_fmt_date(s->first_played_days, first_buf, sizeof(first_buf));
+        pld_fmt_date(s->last_played_days, last_buf, sizeof(last_buf));
+
+        int sess_count = pld_count_sessions_for(sessions, s->title_id);
+
+        /* CSV row */
+        fprintf(csv, "%016llX,", (unsigned long long)s->title_id);
+        csv_write_escaped(csv, name);
+        fprintf(csv, ",%lu,%s,%u,%d,%s,%s\n",
+                (unsigned long)s->total_secs, time_buf,
+                s->launch_count, sess_count, first_buf, last_buf);
+
+        /* JSON entry */
+        if (!first_json) fputs(",\n", json);
+        first_json = false;
+        fprintf(json, "    {\n");
+        fprintf(json, "      \"title_id\": \"%016llX\",\n", (unsigned long long)s->title_id);
+        fprintf(json, "      \"name\": \"");
+        json_write_escaped(json, name);
+        fprintf(json, "\",\n");
+        fprintf(json, "      \"playtime_secs\": %lu,\n", (unsigned long)s->total_secs);
+        fprintf(json, "      \"playtime\": \"%s\",\n", time_buf);
+        fprintf(json, "      \"launches\": %u,\n", s->launch_count);
+        fprintf(json, "      \"sessions\": %d,\n", sess_count);
+        fprintf(json, "      \"first_played\": \"%s\",\n", first_buf);
+        fprintf(json, "      \"last_played\": \"%s\"\n", last_buf);
+        fprintf(json, "    }");
+    }
+
+    fputs("\n  ]\n}\n", json);
+
+    fclose(csv);
+    fclose(json);
+    return 0;
+}
+
+typedef struct {
+    const PldFile       *pld;
+    const PldSessionLog *sessions;
+    Result               rc;
+} ExportArgs;
+
+static void export_work(void *raw) {
+    ExportArgs *a = (ExportArgs *)raw;
+    a->rc = export_data(a->pld, a->sessions);
 }
 
 /* ── Sync flow ──────────────────────────────────────────────────── */
@@ -1996,7 +2102,7 @@ int main(void)
             if (keys & KEY_UP) {
                 if (menu_sel > 0) menu_sel--;
             } else if (keys & KEY_DOWN) {
-                if (menu_sel < 5) menu_sel++;
+                if (menu_sel < 6) menu_sel++;
             } else if (keys & KEY_B) {
                 menu_open = false;
             } else if (keys & KEY_START) {
@@ -2042,7 +2148,20 @@ int main(void)
                         menu_open = false;
                         break;
 
-                    case 3: /* Restore */
+                    case 3: /* Export */
+                        {
+                            ExportArgs exp_args = { &pld, &sessions, -1 };
+                            run_loading_with_spinner("Activity Log++", "Exporting data...",
+                                                     export_work, &exp_args);
+                            if (R_SUCCEEDED(exp_args.rc))
+                                snprintf(status_msg, sizeof(status_msg), "Exported to SD");
+                            else
+                                snprintf(status_msg, sizeof(status_msg), "Export failed");
+                        }
+                        menu_open = false;
+                        break;
+
+                    case 4: /* Restore */
                         {
                             PldBackupList bklist;
                             Result list_rc = pld_list_backups(&bklist);
@@ -2136,7 +2255,7 @@ int main(void)
                         menu_open = false;
                         break;
 
-                    case 4: /* Reset */
+                    case 5: /* Reset */
                         {
                             /* Confirmation sub-loop */
                             bool rst_confirmed = false;
@@ -2186,7 +2305,7 @@ int main(void)
                         menu_open = false;
                         break;
 
-                    case 5: /* Quit */
+                    case 6: /* Quit */
                         quit_requested = true;
                         break;
                 }
