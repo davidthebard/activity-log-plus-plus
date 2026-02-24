@@ -328,7 +328,8 @@ static void draw_pie_slice(float cx, float cy, float r,
     }
 }
 
-static void render_pie_top(const PieSlice slices[], int slice_count, u32 total)
+static void render_pie_top(const PieSlice slices[], int slice_count, u32 total,
+                           float anim_t)
 {
     /* Header */
     ui_draw_rect(0, 0, UI_TOP_W, UI_HEADER_H, UI_COL_HEADER);
@@ -339,21 +340,46 @@ static void render_pie_top(const PieSlice slices[], int slice_count, u32 total)
         return;
     }
 
-    /* Pie chart on left side */
+    /* Pie chart on left side — sweep in over anim_t */
     float cx = 110.0f, cy = 132.0f, r = 80.0f;
     float angle = -((float)M_PI / 2.0f); /* start at 12 o'clock */
+    float max_sweep = anim_t * 2.0f * (float)M_PI;
+    float cumulative = 0.0f;
     for (int i = 0; i < slice_count; i++) {
         float sweep = slices[i].pct * 2.0f * (float)M_PI;
-        if (sweep < 0.001f) continue;
-        draw_pie_slice(cx, cy, r, angle, angle + sweep, pie_colors[i]);
-        angle += sweep;
+        if (sweep < 0.001f) { cumulative += sweep; continue; }
+        if (cumulative >= max_sweep) break;
+        float draw_sweep = sweep;
+        if (cumulative + draw_sweep > max_sweep)
+            draw_sweep = max_sweep - cumulative;
+        draw_pie_slice(cx, cy, r, angle, angle + draw_sweep, pie_colors[i]);
+        angle += draw_sweep;
+        cumulative += sweep;
     }
 
-    /* Legend on right side */
+    /* Legend on right side — staggered fade-in */
     float lx = 210.0f, ly = 30.0f;
     char fallback[32];
+    float legend_cumul = 0.0f;
     for (int i = 0; i < slice_count; i++) {
-        ui_draw_rect(lx, ly + 2, 10, 10, pie_colors[i]);
+        float sweep = slices[i].pct;
+        /* Compute how revealed this slice is (0..1) */
+        float slice_start = legend_cumul;
+        float slice_end   = legend_cumul + sweep;
+        legend_cumul = slice_end;
+
+        if (slice_start >= anim_t) continue; /* not yet visible */
+        float reveal = (anim_t >= slice_end) ? 1.0f
+                       : (anim_t - slice_start) / sweep;
+        if (reveal < 0.0f) reveal = 0.0f;
+        if (reveal > 1.0f) reveal = 1.0f;
+        u8 alpha = (u8)(reveal * 255.0f);
+
+        u32 col      = pie_colors[i];
+        u32 col_a    = (col & 0x00FFFFFF) | ((u32)alpha << 24);
+        u32 txt_col  = (UI_COL_TEXT & 0x00FFFFFF) | ((u32)alpha << 24);
+
+        ui_draw_rect(lx, ly + 2, 10, 10, col_a);
 
         const char *name;
         if (slices[i].s) {
@@ -372,8 +398,8 @@ static void render_pie_top(const PieSlice slices[], int slice_count, u32 total)
         char pct_str[8];
         snprintf(pct_str, sizeof(pct_str), "%d%%", pct_int);
         float pct_w = ui_text_width(pct_str, UI_SCALE_SM);
-        ui_draw_text_right(396, ly, UI_SCALE_SM, UI_COL_TEXT, pct_str);
-        ui_draw_text_trunc(lx + 14, ly, UI_SCALE_SM, UI_COL_TEXT, name,
+        ui_draw_text_right(396, ly, UI_SCALE_SM, txt_col, pct_str);
+        ui_draw_text_trunc(lx + 14, ly, UI_SCALE_SM, txt_col, name,
                            396 - pct_w - 4 - (lx + 14));
         ly += 18.0f;
     }
@@ -383,7 +409,8 @@ static void render_pie_top(const PieSlice slices[], int slice_count, u32 total)
     ui_draw_text_right(396, 222, UI_SCALE_SM, UI_COL_STATUS_TXT, "L/R:tab  B:back");
 }
 
-static void render_pie_bot(const PieSlice slices[], int slice_count, u32 total)
+static void render_pie_bot(const PieSlice slices[], int slice_count, u32 total,
+                           float anim_t)
 {
     /* Header */
     ui_draw_rect(0, 0, UI_BOT_W, UI_HEADER_H, UI_COL_HEADER);
@@ -399,7 +426,24 @@ static void render_pie_bot(const PieSlice slices[], int slice_count, u32 total)
     float y = 28.0f;
     char fallback[32];
     char t_buf[20];
+    float legend_cumul = 0.0f;
     for (int i = 0; i < slice_count; i++) {
+        float sweep = slices[i].pct;
+        float slice_start = legend_cumul;
+        float slice_end   = legend_cumul + sweep;
+        legend_cumul = slice_end;
+
+        if (slice_start >= anim_t) continue;
+        float reveal = (anim_t >= slice_end) ? 1.0f
+                       : (anim_t - slice_start) / sweep;
+        if (reveal < 0.0f) reveal = 0.0f;
+        if (reveal > 1.0f) reveal = 1.0f;
+        u8 alpha = (u8)(reveal * 255.0f);
+
+        u32 col_a    = (pie_colors[i] & 0x00FFFFFF) | ((u32)alpha << 24);
+        u32 txt_col  = (UI_COL_TEXT & 0x00FFFFFF) | ((u32)alpha << 24);
+        u32 dim_col  = (UI_COL_TEXT_DIM & 0x00FFFFFF) | ((u32)alpha << 24);
+
         const char *name;
         if (slices[i].s) {
             name = title_name_lookup(slices[i].s->title_id);
@@ -417,14 +461,14 @@ static void render_pie_bot(const PieSlice slices[], int slice_count, u32 total)
         int pct_int = (int)(slices[i].pct * 100.0f + 0.5f);
 
         /* Colored dot */
-        ui_draw_rect(8, y + 2, 8, 8, pie_colors[i]);
+        ui_draw_rect(8, y + 2, 8, 8, col_a);
 
         char detail[32];
         snprintf(detail, sizeof(detail), "%s  %d%%", t_buf, pct_int);
         float detail_w = ui_text_width(detail, UI_SCALE_SM);
-        ui_draw_text_trunc(20, y, UI_SCALE_SM, UI_COL_TEXT, name,
+        ui_draw_text_trunc(20, y, UI_SCALE_SM, txt_col, name,
                            (UI_BOT_W - 8) - detail_w - 4 - 20);
-        ui_draw_text_right(UI_BOT_W - 8, y, UI_SCALE_SM, UI_COL_TEXT_DIM, detail);
+        ui_draw_text_right(UI_BOT_W - 8, y, UI_SCALE_SM, dim_col, detail);
         y += row_h;
     }
 
@@ -444,17 +488,17 @@ static void render_pie_bot(const PieSlice slices[], int slice_count, u32 total)
 
 /* ── Bar chart (top screen) ───────────────────────────────────── */
 
-static void render_bar_top(const PieSlice slices[], int slice_count, u32 total)
+static void render_bar_top(const PieSlice slices[], int slice_count, u32 total,
+                           float anim_t)
 {
     /* Header */
     ui_draw_rect(0, 0, UI_TOP_W, UI_HEADER_H, UI_COL_HEADER);
     ui_draw_text(6, 4, UI_SCALE_HDR, UI_COL_HEADER_TXT, "Charts: Bar");
-    ui_draw_text_right(396, 4, UI_SCALE_HDR, UI_COL_HEADER_TXT, "L/R:tab");
 
     if (slice_count == 0 || total == 0) {
         ui_draw_text(8, 36, UI_SCALE_LG, UI_COL_TEXT_DIM, "No playtime data");
         ui_draw_rect(0, 220, UI_TOP_W, UI_STATUS_H, UI_COL_STATUS_BG);
-        ui_draw_text_right(396, 222, UI_SCALE_SM, UI_COL_STATUS_TXT, "B:back");
+        ui_draw_text_right(396, 222, UI_SCALE_SM, UI_COL_STATUS_TXT, "L/R:tab  B:back");
         return;
     }
 
@@ -469,7 +513,25 @@ static void render_bar_top(const PieSlice slices[], int slice_count, u32 total)
     char fallback[32];
     char t_buf[20];
 
+    float legend_cumul = 0.0f;
     for (int i = 0; i < slice_count; i++) {
+        /* Staggered fade-in based on slice proportion */
+        float sweep = slices[i].pct;
+        float slice_start = legend_cumul;
+        float slice_end   = legend_cumul + sweep;
+        legend_cumul = slice_end;
+
+        float reveal = (slice_start >= anim_t) ? 0.0f
+                       : (anim_t >= slice_end) ? 1.0f
+                       : (anim_t - slice_start) / sweep;
+        if (reveal < 0.0f) reveal = 0.0f;
+        if (reveal > 1.0f) reveal = 1.0f;
+        u8 alpha = (u8)(reveal * 255.0f);
+
+        u32 bar_col = (pie_colors[i] & 0x00FFFFFF) | ((u32)alpha << 24);
+        u32 txt_col = (UI_COL_TEXT & 0x00FFFFFF) | ((u32)alpha << 24);
+        u32 dim_col = (UI_COL_TEXT_DIM & 0x00FFFFFF) | ((u32)alpha << 24);
+
         const char *name;
         if (slices[i].s) {
             name = title_name_lookup(slices[i].s->title_id);
@@ -483,20 +545,21 @@ static void render_bar_top(const PieSlice slices[], int slice_count, u32 total)
             name = "Other";
         }
 
-        /* Bar */
+        /* Bar — grow from zero during animation */
         float bar_w = (max_secs > 0)
                       ? (float)slices[i].secs / (float)max_secs * bar_max_w
                       : 0.0f;
-        if (bar_w < 2.0f && slices[i].secs > 0) bar_w = 2.0f;
-        ui_draw_rect(8, y + 2, bar_w, 14, pie_colors[i]);
+        bar_w *= anim_t;
+        if (bar_w < 2.0f && slices[i].secs > 0 && anim_t > 0.0f) bar_w = 2.0f;
+        ui_draw_rect(8, y + 2, bar_w, 14, bar_col);
 
         /* Time right-aligned */
         pld_fmt_time(slices[i].secs, t_buf, sizeof(t_buf));
         float time_w = ui_text_width(t_buf, UI_SCALE_SM);
-        ui_draw_text_right(396, y + 1, UI_SCALE_SM, UI_COL_TEXT_DIM, t_buf);
+        ui_draw_text_right(396, y + 1, UI_SCALE_SM, dim_col, t_buf);
 
         /* Name to the right of the bar, truncated to avoid overlapping time */
-        ui_draw_text_trunc(bar_max_w + 16, y + 1, UI_SCALE_SM, UI_COL_TEXT, name,
+        ui_draw_text_trunc(bar_max_w + 16, y + 1, UI_SCALE_SM, txt_col, name,
                            396 - time_w - 4 - (bar_max_w + 16));
 
         y += row_h;
@@ -504,7 +567,7 @@ static void render_bar_top(const PieSlice slices[], int slice_count, u32 total)
 
     /* Status bar */
     ui_draw_rect(0, 220, UI_TOP_W, UI_STATUS_H, UI_COL_STATUS_BG);
-    ui_draw_text_right(396, 222, UI_SCALE_SM, UI_COL_STATUS_TXT, "B:back");
+    ui_draw_text_right(396, 222, UI_SCALE_SM, UI_COL_STATUS_TXT, "L/R:tab  B:back");
 }
 
 /* ── Hold-to-repeat navigation ─────────────────────────────────── */
@@ -543,6 +606,10 @@ static u32 nav_tick(u32 keys_down, u32 keys_held)
         nav_held_frames = 0;
     }
     return fire;
+}
+
+static float lerpf(float a, float b, float t) {
+    return a + (b - a) * t;
 }
 
 /* ── Helpers ────────────────────────────────────────────────────── */
@@ -626,29 +693,26 @@ static void draw_message_screen(const char *title, const char *body)
 /* ── Rendering ──────────────────────────────────────────────────── */
 
 static void render_game_list(const PldSummary *const valid[], int n,
-                             int sel, int scroll_top,
+                             int sel, float scroll_y,
                              const PldSessionLog *sessions,
                              const char *status_msg,
                              bool show_system, bool show_unknown,
                              SortMode sort_mode)
 {
-    /* Header bar */
-    ui_draw_rect(0, 0, UI_TOP_W, UI_HEADER_H, UI_COL_HEADER);
-    ui_draw_text(6, 4, UI_SCALE_HDR, UI_COL_HEADER_TXT, "Activity Log++");
-    {
-        char hbuf[32];
-        snprintf(hbuf, sizeof(hbuf), "Sort: %s", sort_labels[sort_mode]);
-        ui_draw_text_right(UI_TOP_W - 6, 4, UI_SCALE_HDR, UI_COL_HEADER_TXT, hbuf);
-    }
-
-    /* Visible rows */
+    /* Visible rows (drawn first so header paints over any overlap) */
     char t_buf[20];
     char d0_buf[12];
     char d1_buf[12];
     char fallback[32];
 
-    for (int i = scroll_top; i < scroll_top + UI_VISIBLE_ROWS && i < n; i++) {
-        float row_y = UI_LIST_Y + (float)(i - scroll_top) * UI_ROW_H;
+    int first_vis = (int)(scroll_y / UI_ROW_H);
+    if (first_vis < 0) first_vis = 0;
+    int last_vis = first_vis + UI_VISIBLE_ROWS + 1; /* +1 for partial row */
+    if (last_vis > n) last_vis = n;
+
+    for (int i = first_vis; i < last_vis; i++) {
+        float row_y = UI_LIST_Y + (float)i * UI_ROW_H - scroll_y;
+        if (row_y + UI_ROW_H < UI_LIST_Y || row_y >= UI_LIST_BOT) continue;
 
         u32 bg = (i == sel) ? UI_COL_ROW_SEL :
                  (i % 2 == 0) ? UI_COL_BG : UI_COL_ROW_ALT;
@@ -696,6 +760,15 @@ static void render_game_list(const PldSummary *const valid[], int n,
         ui_draw_textf(60.0f, row_y + 28, UI_SCALE_SM, UI_COL_TEXT_DIM,
                       "L:%u  S:%d  %s-%s",
                       (unsigned)s->launch_count, sess_count, d0_buf, d1_buf);
+    }
+
+    /* Header bar (drawn after rows so it covers any partial overlap) */
+    ui_draw_rect(0, 0, UI_TOP_W, UI_HEADER_H, UI_COL_HEADER);
+    ui_draw_text(6, 4, UI_SCALE_HDR, UI_COL_HEADER_TXT, "Activity Log++");
+    {
+        char hbuf[32];
+        snprintf(hbuf, sizeof(hbuf), "Sort: %s", sort_labels[sort_mode]);
+        ui_draw_text_right(UI_TOP_W - 6, 4, UI_SCALE_HDR, UI_COL_HEADER_TXT, hbuf);
     }
 
     /* Status bar */
@@ -1416,6 +1489,7 @@ int main(void)
 
     int sel        = 0;   /* currently highlighted entry index */
     int scroll_top = 0;   /* index of first visible row        */
+    float scroll_y = 0.0f; /* smooth scroll pixel offset        */
 
     char status_msg[48] = {0};
 
@@ -1429,6 +1503,7 @@ int main(void)
     PieSlice pie_slices[PIE_SLICES + 1];
     int  pie_count = 0;
     u32  pie_total = 0;
+    int  chart_anim_frame = 0;
 
     /* Rankings state */
     bool rankings_view = false;
@@ -1453,18 +1528,24 @@ int main(void)
                 charts_view = false;
             } else if (keys & KEY_L) {
                 chart_tab = (chart_tab + CHART_TAB_COUNT - 1) % CHART_TAB_COUNT;
+                chart_anim_frame = 0;
             } else if (keys & KEY_R) {
                 chart_tab = (chart_tab + 1) % CHART_TAB_COUNT;
+                chart_anim_frame = 0;
             }
+
+            float anim_t = (float)chart_anim_frame / 20.0f;
+            if (anim_t > 1.0f) anim_t = 1.0f;
+            chart_anim_frame++;
 
             ui_begin_frame();
             ui_target_top();
             if (chart_tab == CHART_BAR)
-                render_bar_top(pie_slices, pie_count, pie_total);
+                render_bar_top(pie_slices, pie_count, pie_total, anim_t);
             else
-                render_pie_top(pie_slices, pie_count, pie_total);
+                render_pie_top(pie_slices, pie_count, pie_total, anim_t);
             ui_target_bot();
-            render_pie_bot(pie_slices, pie_count, pie_total);
+            render_pie_bot(pie_slices, pie_count, pie_total, anim_t);
             ui_end_frame();
         } else if (rankings_view) {
             /* ── Rankings view ── */
@@ -1590,7 +1671,7 @@ int main(void)
                          * sync partner and aren't already in the store. */
                         draw_message_screen("Activity Log++", "Fetching missing icons...");
                         icon_fetch_missing(valid, n);
-                        sel = 0; scroll_top = 0;
+                        sel = 0; scroll_top = 0; scroll_y = 0.0f;
                         menu_open = false;
                         break;
 
@@ -1656,7 +1737,7 @@ int main(void)
                                             sessions = rst_sessions;
                                             n = collect_valid(&pld, valid, show_system, show_unknown);
                                             sort_valid(valid, n, sort_mode, &sessions, &pld);
-                                            sel = 0; scroll_top = 0;
+                                            sel = 0; scroll_top = 0; scroll_y = 0.0f;
                                         } else {
                                             pld_sessions_free(&rst_sessions);
                                         }
@@ -1703,6 +1784,7 @@ int main(void)
                         pie_count = build_pie_data(valid, n, pie_slices, &pie_total);
                         charts_view = true;
                         chart_tab = CHART_PIE;
+                        chart_anim_frame = 0;
                         menu_open = false;
                         break;
 
@@ -1735,17 +1817,17 @@ int main(void)
                 }
                 n = collect_valid(&pld, valid, show_system, show_unknown);
                 sort_valid(valid, n, sort_mode, &sessions, &pld);
-                sel = 0; scroll_top = 0;
+                sel = 0; scroll_top = 0; scroll_y = 0.0f;
                 status_msg[0] = '\0';
             } else if (keys & KEY_L) {
                 sort_mode = (sort_mode + SORT_COUNT - 1) % SORT_COUNT;
                 sort_valid(valid, n, sort_mode, &sessions, &pld);
-                sel = 0; scroll_top = 0;
+                sel = 0; scroll_top = 0; scroll_y = 0.0f;
                 status_msg[0] = '\0';
             } else if (keys & KEY_R) {
                 sort_mode = (sort_mode + 1) % SORT_COUNT;
                 sort_valid(valid, n, sort_mode, &sessions, &pld);
-                sel = 0; scroll_top = 0;
+                sel = 0; scroll_top = 0; scroll_y = 0.0f;
                 status_msg[0] = '\0';
             }
 
@@ -1831,9 +1913,15 @@ int main(void)
         }
 
         if (!charts_view && !rankings_view) {
+            /* Smooth scroll interpolation */
+            float scroll_target = (float)scroll_top * UI_ROW_H;
+            scroll_y = lerpf(scroll_y, scroll_target, 0.3f);
+            if (scroll_y - scroll_target < 0.5f && scroll_y - scroll_target > -0.5f)
+                scroll_y = scroll_target;
+
             ui_begin_frame();
             ui_target_top();
-            render_game_list(valid, n, sel, scroll_top, &sessions, status_msg,
+            render_game_list(valid, n, sel, scroll_y, &sessions, status_msg,
                              show_system, show_unknown, sort_mode);
             if (menu_open) render_menu(menu_sel);
             ui_target_bot();
