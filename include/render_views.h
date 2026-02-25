@@ -1,6 +1,7 @@
 #pragma once
 #include <3ds.h>
 #include "pld.h"
+#include "settings.h"
 
 /* ── View modes ─────────────────────────────────────────────────── */
 
@@ -33,7 +34,8 @@ float lerpf(float a, float b, float t);
 bool should_show(u64 title_id, bool show_system);
 int  collect_valid(const PldFile *pld,
                    const PldSummary *valid[PLD_SUMMARY_COUNT],
-                   bool show_system, bool show_unknown);
+                   bool show_system, bool show_unknown,
+                   u32 min_play_secs, const HiddenGames *hidden);
 void sort_valid(const PldSummary *valid[], int n,
                 ViewMode mode, const PldSessionLog *sessions,
                 const PldFile *pld);
@@ -76,6 +78,6 @@ void render_detail_top(const PldSummary *s, const char *name,
                        const PldSessionLog *sessions,
                        const int *sess_indices, int sess_count,
                        int detail_scroll);
-void render_detail_bot(void);
+void render_detail_bot(bool is_hidden);
 
 void render_menu(int sel);

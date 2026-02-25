@@ -7,6 +7,7 @@
 #include "render_views.h"
 #include "ui.h"
 #include "pld.h"
+#include "settings.h"
 #include "title_names.h"
 #include "title_db.h"
 #include "title_icons.h"
@@ -83,13 +84,16 @@ bool should_show(u64 title_id, bool show_system)
 
 int collect_valid(const PldFile *pld,
                   const PldSummary *valid[PLD_SUMMARY_COUNT],
-                  bool show_system, bool show_unknown)
+                  bool show_system, bool show_unknown,
+                  u32 min_play_secs, const HiddenGames *hidden)
 {
     int n = 0;
     for (int i = 0; i < PLD_SUMMARY_COUNT; i++) {
         const PldSummary *s = &pld->summaries[i];
         if (pld_summary_is_empty(s)) continue;
+        if (s->total_secs < min_play_secs) continue;
         if (!should_show(s->title_id, show_system)) continue;
+        if (!show_unknown && hidden_contains(hidden, s->title_id)) continue;
         if (!show_unknown && !title_name_lookup(s->title_id)
                           && !title_db_lookup(s->title_id)) continue;
         valid[n++] = s;
@@ -332,7 +336,9 @@ void render_game_list(const PldSummary *const valid[], int n,
         u32 text_dim_col = (UI_COL_TEXT_DIM & 0x00FFFFFF) | ((u32)alpha << 24);
         float text_x = card_x + 6.0f;
         float text_r = (float)(UI_TOP_W - UI_ROW_MARGIN) - 6.0f;
-        ui_draw_text(text_x, row_y + 8, UI_SCALE_LG, text_col, name);
+        float time_w = ui_text_width(t_buf, UI_SCALE_LG);
+        float name_max = text_r - text_x - time_w - 4.0f;
+        ui_draw_text_trunc(text_x, row_y + 8, UI_SCALE_LG, text_col, name, name_max);
         ui_draw_text_right(text_r, row_y + 8, UI_SCALE_LG, text_dim_col, t_buf);
         {
             u32 avg_secs = (s->launch_count > 0) ? (s->total_secs / s->launch_count) : 0;
@@ -575,8 +581,6 @@ void render_rankings_top(const PldSummary *ranked[], int rank_count,
                      (unsigned long long)s->title_id);
             name = fallback;
         }
-        ui_draw_text(text_x + 30.0f, row_y + 8, UI_SCALE_LG, text_col, name);
-
         char metric[24];
         switch (mode) {
             case VIEW_PLAYTIME:
@@ -592,6 +596,9 @@ void render_rankings_top(const PldSummary *ranked[], int rank_count,
                 metric[0] = '\0';
                 break;
         }
+        float metric_w = ui_text_width(metric, UI_SCALE_LG);
+        float name_max = text_r - (text_x + 30.0f) - metric_w - 4.0f;
+        ui_draw_text_trunc(text_x + 30.0f, row_y + 8, UI_SCALE_LG, text_col, name, name_max);
         ui_draw_text_right(text_r, row_y + 8, UI_SCALE_LG, text_dim_col, metric);
 
         {
@@ -625,7 +632,7 @@ void render_detail_top(const PldSummary *s, const char *name,
     ui_draw_rect(0, 0, UI_TOP_W, UI_TOP_H, UI_COL_BG);
 
     ui_draw_header(UI_TOP_W);
-    ui_draw_text(6, 4, UI_SCALE_HDR, UI_COL_HEADER_TXT, name);
+    ui_draw_text_trunc(6, 4, UI_SCALE_HDR, UI_COL_HEADER_TXT, name, UI_TOP_W - 12.0f);
 
     C2D_Image icon;
     if (title_icon_get(s->title_id, &icon)) {
@@ -719,19 +726,21 @@ void render_detail_top(const PldSummary *s, const char *name,
     }
 }
 
-void render_detail_bot(void)
+void render_detail_bot(bool is_hidden)
 {
     ui_draw_header(UI_BOT_W);
     ui_draw_text(6, 4, UI_SCALE_HDR, UI_COL_HEADER_TXT, "Game Details");
     ui_draw_text_right(UI_BOT_W - 8, 36, UI_SCALE_LG, UI_COL_TEXT_DIM, "Up/Dn:scroll  B:back");
+    ui_draw_text_right(UI_BOT_W - 8, 56, UI_SCALE_LG, UI_COL_TEXT_DIM,
+                       is_hidden ? "X:unhide" : "X:hide");
 }
 
 /* ── Menu overlay ───────────────────────────────────────────────── */
 
 void render_menu(int sel)
 {
-    static const char *items[] = { "Charts", "Sync", "Backup", "Export", "Restore", "Reset", "Quit" };
-    static const int   NITEMS  = 7;
+    static const char *items[] = { "Charts", "Sync", "Backup", "Export", "Restore", "Reset", "Settings", "Quit" };
+    static const int   NITEMS  = 8;
 
     float mx     = 8.0f;
     float my     = 28.0f;
