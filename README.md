@@ -34,15 +34,16 @@ Activity Log++ reads this data from NAND (read-only), merges it with data from o
 
 ## Controls
 
-| Button | Main List | Detail View | Rankings |
-|--------|-----------|-------------|----------|
-| Up/Down | Scroll (hold to repeat) | Scroll sessions | Scroll |
-| A | Open detail view | — | Open detail view |
-| B | — | Back to list | Back to list |
-| X | Rankings | — | — |
-| Y | Create backup | — | — |
-| L/R | Cycle sort mode | — | Cycle tab |
-| START | Open menu | — | — |
+The main screen uses a **unified view mode**: L/R cycles through both sort orders (list view) and ranking types (top-10 view). Modes are: Last Played, Playtime, Launches, Avg Session, First Played, Name. Playtime, Launches, and Avg Session show the rankings view; the others show the full sorted list.
+
+| Button | List / Rankings | Detail View | Charts |
+|--------|-----------------|-------------|--------|
+| Up/Down | Scroll (hold to repeat) | Scroll sessions | — |
+| A | Open detail view | — | — |
+| B | — | Back to list | Back |
+| Y | Cycle filter (Games / Games+Sys / All) | — | — |
+| L/R | Cycle view mode (sort or ranking type) | — | Cycle tab (pie / bar) |
+| START | Open menu (Charts, Sync, Backup, Export, Reset, Quit) | — | — |
 
 ## Building
 
