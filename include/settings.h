@@ -21,6 +21,7 @@ typedef struct {
     u32 magic;
     u32 min_play_secs;   /* default 600 (10 min) */
     u32 starting_view;   /* ViewMode enum value   */
+    u32 music_enabled;   /* 1 = on (default), 0 = off */
 } AppSettings;
 
 void settings_defaults(AppSettings *s);

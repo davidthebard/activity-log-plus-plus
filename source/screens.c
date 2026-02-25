@@ -5,6 +5,7 @@
 
 #include "screens.h"
 #include "ui.h"
+#include "audio.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -134,6 +135,7 @@ void run_with_spinner(const char *title, const char *body,
         thread = threadCreate(worker_entry, &ctx, 0x8000, 0x38, -2, false);
     if (thread) {
         while (!ctx.done && aptMainLoop()) {
+            audio_tick();
             if (step > 0)
                 draw_progress_screen(title, body, step, total_steps);
             else

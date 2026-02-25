@@ -14,7 +14,7 @@ void ui_init(void) {
     C2D_Prepare();
     s_top     = C2D_CreateScreenTarget(GFX_TOP,    GFX_LEFT);
     s_bot     = C2D_CreateScreenTarget(GFX_BOTTOM, GFX_LEFT);
-    s_textbuf = C2D_TextBufNew(4096);
+    s_textbuf = C2D_TextBufNew(16384);
 }
 
 void ui_fini(void) {
@@ -233,20 +233,26 @@ void ui_draw_text_trunc(float x, float y, float scale, u32 color,
     }
 
     char buf[128];
-    size_t len = strlen(str);
-    if (len >= sizeof(buf) - 3) len = sizeof(buf) - 4;
+    size_t slen = strlen(str);
+    if (slen >= sizeof(buf) - 3) slen = sizeof(buf) - 4;
 
-    while (len > 0) {
-        len--;
-        memcpy(buf, str, len);
-        buf[len] = '.'; buf[len+1] = '.'; buf[len+2] = '.'; buf[len+3] = '\0';
-        if (ui_text_width(buf, scale) <= max_w)
-            break;
+    /* Binary search for the longest prefix that fits with "..." */
+    size_t lo = 0, hi = slen, best = 0;
+    while (lo <= hi) {
+        size_t mid = (lo + hi) / 2;
+        memcpy(buf, str, mid);
+        buf[mid] = '.'; buf[mid+1] = '.'; buf[mid+2] = '.'; buf[mid+3] = '\0';
+        if (ui_text_width(buf, scale) <= max_w) {
+            best = mid;
+            if (mid == hi) break;
+            lo = mid + 1;
+        } else {
+            if (mid == 0) break;
+            hi = mid - 1;
+        }
     }
 
-    if (len == 0) {
-        buf[0] = '.'; buf[1] = '.'; buf[2] = '.'; buf[3] = '\0';
-    }
-
+    memcpy(buf, str, best);
+    buf[best] = '.'; buf[best+1] = '.'; buf[best+2] = '.'; buf[best+3] = '\0';
     ui_draw_text(x, y, scale, color, buf);
 }

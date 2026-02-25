@@ -18,6 +18,7 @@
 #include "settings.h"
 #include "app_ctx.h"
 #include "modal_views.h"
+#include "audio.h"
 
 /* ── Constants ──────────────────────────────────────────────────── */
 
@@ -134,6 +135,7 @@ int main(void)
     gfxInitDefault();
     ui_init();
     fsInit();
+    romfsInit();
     APT_SetAppCpuTimeLimit(30);
 
     /* Step 1: Open save archive */
@@ -150,7 +152,9 @@ int main(void)
             if (hidKeysDown() & KEY_START) break;
             draw_message_screen("Error", err_body);
         }
+        audio_exit();
         ui_fini();
+        romfsExit();
         fsExit();
         gfxExit();
         return 1;
@@ -176,7 +180,9 @@ int main(void)
             if (hidKeysDown() & KEY_START) break;
             draw_message_screen("Error", err_body);
         }
+        audio_exit();
         ui_fini();
+        romfsExit();
         fsExit();
         gfxExit();
         return 1;
@@ -191,7 +197,9 @@ int main(void)
             if (hidKeysDown() & KEY_START) break;
             draw_message_screen("Error", err_body);
         }
+        audio_exit();
         ui_fini();
+        romfsExit();
         fsExit();
         gfxExit();
         return 1;
@@ -231,6 +239,10 @@ int main(void)
     run_with_spinner("Activity Log++", "Fetching missing icons (this may take a moment)...", 7, 7,
                      icon_fetch_work, &if_args);
 
+    /* Start background music after all setup is complete */
+    audio_init("romfs:/bgm.mp3");
+    audio_set_enabled(ctx.settings.music_enabled != 0);
+
     int prev_sel   = -1;
     float sel_pop  = 0.0f;
 
@@ -253,6 +265,7 @@ int main(void)
     /* ── Input loop ── */
     bool quit_requested = false;
     while (!quit_requested && aptMainLoop()) {
+        audio_tick();
         hidScanInput();
         u32 keys = hidKeysDown();
         u32 held = hidKeysHeld();
@@ -503,7 +516,9 @@ int main(void)
     pld_sessions_free(&ctx.sessions);
     title_icons_free();
     title_names_free();
+    audio_exit();
     ui_fini();
+    romfsExit();
     fsExit();
     gfxExit();
     return 0;

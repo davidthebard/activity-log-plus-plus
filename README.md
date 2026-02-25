@@ -12,6 +12,7 @@ The official Activity Log app only shows play history for titles installed on th
 - **CSV/JSON export** — Export a summary of all titles to `export.csv` and `export.json` on the SD card for analysis on a PC
 - **Rankings** — Top 10 charts for playtime, launches, average session length, and most recently played
 - **Pie and bar charts** — Visual breakdown of playtime distribution across your library
+- **Original background music** — Original soundtrack composed for the app, with a toggle in settings
 - **Game icons** — Fetched from GameTDB and cached on the SD card
 - **Title name lookup** — Names resolved from the system's AM service, a built-in database, and synced between devices
 - **Sort and filter** — Sort by last played, playtime, launches, average session length, first played, or name; filter between games, games + system apps, or all titles
@@ -82,6 +83,7 @@ sdmc:/3ds/activity-log-pp/
 ## Third-Party
 
 - [stb_image](https://github.com/nothings/stb) by Sean Barrett — public domain / MIT
+- [minimp3](https://github.com/lieff/minimp3) by lieff — public domain (CC0)
 - Game icons sourced from [GameTDB](https://www.gametdb.com/)
 
 ## License

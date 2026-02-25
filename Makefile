@@ -21,6 +21,7 @@ BUILD       := build
 SOURCES     := source
 DATA        := data
 INCLUDES    := include
+ROMFS       := romfs
 
 APP_TITLE       := Activity Log++
 APP_DESCRIPTION := 3DS Activity Log viewer and sync tool

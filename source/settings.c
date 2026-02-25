@@ -19,6 +19,7 @@ void settings_defaults(AppSettings *s)
     s->magic         = SETTINGS_MAGIC;
     s->min_play_secs = 600;
     s->starting_view = 0;   /* VIEW_LAST_PLAYED */
+    s->music_enabled = 1;
 }
 
 void settings_load(AppSettings *s)

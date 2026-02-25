@@ -10,6 +10,7 @@
 #include "sync_flow.h"
 #include "title_names.h"
 #include "title_db.h"
+#include "audio.h"
 
 /* ── Reset worker (used only by run_reset_view) ────────────────── */
 
@@ -80,6 +81,7 @@ void run_detail_view(AppCtx *ctx, const PldSummary *game)
     bool det_hidden_toggled = false;
     nav_reset();
     while (!detail_done && aptMainLoop()) {
+        audio_tick();
         hidScanInput();
         u32 dkeys = hidKeysDown();
         u32 dheld = hidKeysHeld();
@@ -126,9 +128,11 @@ void run_settings_view(AppCtx *ctx)
     int mpi = settings_min_play_index(ctx->settings.min_play_secs);
     int svi = (int)ctx->settings.starting_view;
     if (svi < 0 || svi >= VIEW_COUNT) svi = 0;
+    int music_on = ctx->settings.music_enabled ? 1 : 0;
     bool set_done = false;
     nav_reset();
     while (!set_done && aptMainLoop()) {
+        audio_tick();
         hidScanInput();
         u32 skeys = hidKeysDown();
         u32 sheld = hidKeysHeld();
@@ -138,14 +142,16 @@ void run_settings_view(AppCtx *ctx)
         } else if (snav & KEY_UP) {
             if (set_sel > 0) set_sel--;
         } else if (snav & KEY_DOWN) {
-            if (set_sel < 1) set_sel++;
+            if (set_sel < 2) set_sel++;
         } else if (skeys & (KEY_LEFT | KEY_RIGHT)) {
             int dir = (skeys & KEY_RIGHT) ? 1 : -1;
             if (set_sel == 0) {
                 mpi = (mpi + dir + MIN_PLAY_OPTION_COUNT)
                       % MIN_PLAY_OPTION_COUNT;
-            } else {
+            } else if (set_sel == 1) {
                 svi = (svi + dir + VIEW_COUNT) % VIEW_COUNT;
+            } else {
+                music_on = !music_on;
             }
         }
 
@@ -158,7 +164,7 @@ void run_settings_view(AppCtx *ctx)
                          UI_COL_HEADER_TXT, "Settings");
 
             float sy = 40.0f;
-            for (int r = 0; r < 2; r++) {
+            for (int r = 0; r < 3; r++) {
                 float ry = sy + (float)r * 36.0f;
                 u32 rbg = (r == set_sel) ? UI_COL_ROW_SEL
                         : (r % 2 == 0)   ? UI_COL_BG
@@ -166,15 +172,18 @@ void run_settings_view(AppCtx *ctx)
                 ui_draw_rect(0, ry, UI_TOP_W, 32.0f, rbg);
 
                 const char *label = (r == 0) ? "Min playtime"
-                                             : "Starting view";
+                                   : (r == 1) ? "Starting view"
+                                              : "Music";
                 ui_draw_text(8, ry + 4, UI_SCALE_LG,
                              UI_COL_TEXT, label);
 
                 const char *val;
                 if (r == 0) {
                     val = min_play_labels[mpi];
-                } else {
+                } else if (r == 1) {
                     val = view_labels[svi];
+                } else {
+                    val = music_on ? "On" : "Off";
                 }
                 ui_draw_text_right(UI_TOP_W - 12, ry + 4,
                                    UI_SCALE_LG,
@@ -197,9 +206,11 @@ void run_settings_view(AppCtx *ctx)
             ui_end_frame();
         }
     }
-    ctx->settings.min_play_secs = min_play_options[mpi];
-    ctx->settings.starting_view = (u32)svi;
+    ctx->settings.min_play_secs  = min_play_options[mpi];
+    ctx->settings.starting_view  = (u32)svi;
+    ctx->settings.music_enabled  = music_on ? 1 : 0;
     settings_save(&ctx->settings);
+    audio_set_enabled(music_on);
     app_ctx_rebuild(ctx);
 }
 
@@ -228,6 +239,7 @@ void run_restore_view(AppCtx *ctx)
     bool chooser_done = false;
     nav_reset();
     while (!chooser_done && aptMainLoop()) {
+        audio_tick();
         hidScanInput();
         u32 ckeys = hidKeysDown();
         u32 cheld = hidKeysHeld();
@@ -302,6 +314,7 @@ void run_reset_view(AppCtx *ctx)
     bool rst_confirmed = false;
     bool rst_done = false;
     while (!rst_done && aptMainLoop()) {
+        audio_tick();
         hidScanInput();
         u32 rkeys = hidKeysDown();
         if (rkeys & KEY_A) {

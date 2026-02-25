@@ -7,6 +7,7 @@
 #include "net.h"
 #include "pld.h"
 #include "title_names.h"
+#include "audio.h"
 
 #define SYNC_COUNT_PATH  "sdmc:/3ds/activity-log-pp/synccount"
 
@@ -83,6 +84,7 @@ void run_sync_flow(PldFile *pld, PldSessionLog *sessions,
     bool net_active = false;
 
     while (aptMainLoop()) {
+        audio_tick();
         hidScanInput();
         u32 role_keys = hidKeysDown();
 
@@ -98,6 +100,7 @@ void run_sync_flow(PldFile *pld, PldSessionLog *sessions,
                          "Network init failed: 0x%08lX\n\nPress START to continue.",
                          ni_args.rc);
                 while (aptMainLoop()) {
+                    audio_tick();
                     hidScanInput();
                     if (hidKeysDown() & KEY_START) break;
                     draw_message_screen("Network Error", err_body);
@@ -122,6 +125,7 @@ void run_sync_flow(PldFile *pld, PldSessionLog *sessions,
         char net_body[192] = "";
 
         while (aptMainLoop()) {
+            audio_tick();
             hidScanInput();
             u32 net_keys = hidKeysDown();
 
