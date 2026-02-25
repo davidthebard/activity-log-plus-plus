@@ -61,6 +61,10 @@ make clean && make
 
 Produces `activity-log-pp.3dsx` for use with a homebrew launcher.
 
+## Important Note
+
+The 3DS only writes recent play session data to its save archive when the **native Activity Log app** is opened. Until then, the latest sessions remain in system memory and are not visible to any homebrew. If your most recent play data is missing, open the built-in Activity Log app briefly, then relaunch Activity Log++.
+
 ## Installation
 
 1. Copy `activity-log-pp.3dsx` to the `3ds/` folder on your SD card
