@@ -21,7 +21,7 @@ static inline bool view_is_rank(ViewMode m) {
     return m == VIEW_PLAYTIME || m == VIEW_LAUNCHES || m == VIEW_AVG_SESSION;
 }
 
-#define RANK_MAX 10
+#define RANK_MAX PLD_SUMMARY_COUNT
 
 /* ── Navigation ─────────────────────────────────────────────────── */
 
