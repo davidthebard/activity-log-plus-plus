@@ -31,43 +31,30 @@ static const u32 region_ids[] = {
 #define M_PI 3.14159265358979323846
 #endif
 
-/* ── Rankings tabs ─────────────────────────────────────────────── */
+/* ── Unified view modes (L/R cycles through all) ────────────────── */
 
 typedef enum {
-    RANK_PLAYTIME,   /* "Top Playtime"  — total_secs descending      */
-    RANK_LAUNCHES,   /* "Top Launches"  — launch_count descending    */
-    RANK_AVG_SESSION,/* "Top Avg Session" — avg session length desc   */
-    RANK_RECENT,     /* "Most Recent"   — last_played_days descending */
-    RANK_TAB_COUNT
-} RankingsTab;
+    VIEW_LAST_PLAYED,   /* sort — default, most recently played first */
+    VIEW_PLAYTIME,      /* rank — top 10 by total_secs                */
+    VIEW_LAUNCHES,      /* rank — top 10 by launch_count              */
+    VIEW_AVG_SESSION,   /* rank — top 10 by avg session length        */
+    VIEW_FIRST_PLAYED,  /* sort — oldest first                        */
+    VIEW_NAME,          /* sort — alphabetical A-Z                    */
+    VIEW_COUNT          /* = 6                                        */
+} ViewMode;
 
-static const char *rank_tab_labels[RANK_TAB_COUNT] = {
-    "Top Playtime", "Top Launches", "Top Avg Session", "Most Recent"
-};
-
-#define RANK_MAX 10
-
-/* ── Sort modes ─────────────────────────────────────────────────── */
-
-typedef enum {
-    SORT_LAST_PLAYED,   /* default — most recently played first */
-    SORT_PLAYTIME,      /* total_secs descending                */
-    SORT_LAUNCHES,      /* launch_count descending              */
-    SORT_AVG_SESSION,   /* avg session length descending        */
-    SORT_FIRST_PLAYED,  /* first_played_days descending (newest first) */
-    SORT_NAME,          /* alphabetical A-Z                     */
-    SORT_COUNT
-} SortMode;
-
-static const char *sort_labels[SORT_COUNT] = {
+static const char *view_labels[VIEW_COUNT] = {
     "Last Played", "Playtime", "Launches", "Avg Session", "First Played", "Name"
 };
 
-/* File-static avg session cache for the SORT_AVG_SESSION comparator.
- * Indexed by the summary's position in the full summaries[256] array.
- * sort_summaries_base points to summaries[0] so the comparator can
- * recover the index via pointer arithmetic. */
-static u32 avg_session_cache[PLD_SUMMARY_COUNT];
+static inline bool view_is_rank(ViewMode m) {
+    return m == VIEW_PLAYTIME || m == VIEW_LAUNCHES || m == VIEW_AVG_SESSION;
+}
+
+#define RANK_MAX 10
+
+/* sort_summaries_base points to summaries[0] so the rank comparator
+ * can recover the index via pointer arithmetic. */
 static const PldSummary *sort_summaries_base;
 
 /* ── Sync counter helpers ────────────────────────────────────────── */
@@ -94,32 +81,6 @@ static int cmp_last_played(const void *a, const void *b) {
     return 0;
 }
 
-static int cmp_playtime(const void *a, const void *b) {
-    const PldSummary *sa = *(const PldSummary *const *)a;
-    const PldSummary *sb = *(const PldSummary *const *)b;
-    if (sb->total_secs != sa->total_secs)
-        return (sb->total_secs > sa->total_secs) ? 1 : -1;
-    return 0;
-}
-
-static int cmp_launches(const void *a, const void *b) {
-    const PldSummary *sa = *(const PldSummary *const *)a;
-    const PldSummary *sb = *(const PldSummary *const *)b;
-    if (sb->launch_count != sa->launch_count)
-        return (int)sb->launch_count - (int)sa->launch_count;
-    return 0;
-}
-
-static int cmp_avg_session(const void *a, const void *b) {
-    const PldSummary *sa = *(const PldSummary *const *)a;
-    const PldSummary *sb = *(const PldSummary *const *)b;
-    int ia = (int)(sa - sort_summaries_base);
-    int ib = (int)(sb - sort_summaries_base);
-    if (avg_session_cache[ib] != avg_session_cache[ia])
-        return (avg_session_cache[ib] > avg_session_cache[ia]) ? 1 : -1;
-    return 0;
-}
-
 static int cmp_first_played(const void *a, const void *b) {
     const PldSummary *sa = *(const PldSummary *const *)a;
     const PldSummary *sb = *(const PldSummary *const *)b;
@@ -142,29 +103,20 @@ static int cmp_name(const void *a, const void *b) {
 }
 
 static void sort_valid(const PldSummary *valid[], int n,
-                       SortMode mode, const PldSessionLog *sessions,
+                       ViewMode mode, const PldSessionLog *sessions,
                        const PldFile *pld)
 {
     if (n <= 1) return;
 
-    /* Pre-compute avg session length if needed.
-     * Cache is indexed by summary slot (offset from pld->summaries[0]),
-     * so it survives qsort reordering of valid[]. */
-    if (mode == SORT_AVG_SESSION) {
-        sort_summaries_base = pld->summaries;
-        for (int i = 0; i < n; i++) {
-            int slot = (int)(valid[i] - pld->summaries);
-            avg_session_cache[slot] = (valid[i]->launch_count > 0)
-                ? (valid[i]->total_secs / valid[i]->launch_count) : 0;
-        }
-    }
-
     typedef int (*cmp_fn)(const void *, const void *);
-    static const cmp_fn comparators[SORT_COUNT] = {
-        cmp_last_played, cmp_playtime, cmp_launches,
-        cmp_avg_session, cmp_first_played, cmp_name
-    };
-    qsort(valid, (size_t)n, sizeof(valid[0]), comparators[mode]);
+    cmp_fn cmp = NULL;
+    switch (mode) {
+        case VIEW_LAST_PLAYED:  cmp = cmp_last_played;  break;
+        case VIEW_FIRST_PLAYED: cmp = cmp_first_played; break;
+        case VIEW_NAME:         cmp = cmp_name;         break;
+        default: return; /* rank modes don't use sort_valid */
+    }
+    qsort(valid, (size_t)n, sizeof(valid[0]), cmp);
 }
 
 /* ── Rankings builder ──────────────────────────────────────────── */
@@ -197,23 +149,15 @@ static int cmp_rank_avg_session(const void *a, const void *b) {
     return 0;
 }
 
-static int cmp_rank_recent(const void *a, const void *b) {
-    const PldSummary *sa = *(const PldSummary *const *)a;
-    const PldSummary *sb = *(const PldSummary *const *)b;
-    if (sb->last_played_days != sa->last_played_days)
-        return (int)sb->last_played_days - (int)sa->last_played_days;
-    return 0;
-}
-
 /*
  * Build the top-N rankings from valid[].
  * ranked[] must have RANK_MAX capacity.
  * Returns the number of ranked entries (min(n, RANK_MAX)).
  * rank_metric_out[] receives per-entry metric values (avg_secs for
- * RANK_AVG_SESSION, session counts for other tabs).
+ * VIEW_AVG_SESSION, session counts for other modes).
  */
 static int build_rankings(const PldSummary *valid[], int n,
-                           RankingsTab tab, const PldSessionLog *sessions,
+                           ViewMode mode, const PldSessionLog *sessions,
                            const PldFile *pld,
                            const PldSummary *ranked[RANK_MAX],
                            u32 rank_metric_out[RANK_MAX])
@@ -225,8 +169,8 @@ static int build_rankings(const PldSummary *valid[], int n,
     if (!tmp) return 0;
     memcpy(tmp, valid, (size_t)n * sizeof(tmp[0]));
 
-    /* Pre-compute avg session length for RANK_AVG_SESSION */
-    if (tab == RANK_AVG_SESSION) {
+    /* Pre-compute avg session length for VIEW_AVG_SESSION */
+    if (mode == VIEW_AVG_SESSION) {
         sort_summaries_base = pld->summaries;
         for (int i = 0; i < n; i++) {
             int slot = (int)(tmp[i] - pld->summaries);
@@ -236,11 +180,14 @@ static int build_rankings(const PldSummary *valid[], int n,
     }
 
     typedef int (*cmp_fn)(const void *, const void *);
-    static const cmp_fn rank_cmps[RANK_TAB_COUNT] = {
-        cmp_rank_playtime, cmp_rank_launches,
-        cmp_rank_avg_session, cmp_rank_recent
-    };
-    qsort(tmp, (size_t)n, sizeof(tmp[0]), rank_cmps[tab]);
+    cmp_fn cmp = NULL;
+    switch (mode) {
+        case VIEW_PLAYTIME:    cmp = cmp_rank_playtime;    break;
+        case VIEW_LAUNCHES:    cmp = cmp_rank_launches;    break;
+        case VIEW_AVG_SESSION: cmp = cmp_rank_avg_session; break;
+        default: free(tmp); return 0;
+    }
+    qsort(tmp, (size_t)n, sizeof(tmp[0]), cmp);
 
     int count = (n < RANK_MAX) ? n : RANK_MAX;
     for (int i = 0; i < count; i++) {
@@ -1011,7 +958,7 @@ static void render_game_list(const PldSummary *const valid[], int n,
                              const PldSessionLog *sessions,
                              const char *status_msg,
                              bool show_system, bool show_unknown,
-                             SortMode sort_mode, float anim_t,
+                             ViewMode mode, float anim_t,
                              float sel_pop)
 {
     /* Darker list background */
@@ -1147,7 +1094,7 @@ static void render_game_list(const PldSummary *const valid[], int n,
     ui_draw_text(6, 4, UI_SCALE_HDR, UI_COL_HEADER_TXT, "Activity Log++");
     {
         char hbuf[32];
-        snprintf(hbuf, sizeof(hbuf), "Sort: %s", sort_labels[sort_mode]);
+        snprintf(hbuf, sizeof(hbuf), "Sort: %s", view_labels[mode]);
         ui_draw_text_right(UI_TOP_W - 6, 4, UI_SCALE_HDR, UI_COL_HEADER_TXT, hbuf);
     }
 
@@ -1157,8 +1104,7 @@ static void render_bottom_stats(const PldSummary *valid[], int n,
                                 const PldSessionLog *sessions,
                                 u32 sync_count,
                                 const char *status_msg,
-                                bool show_system, bool show_unknown,
-                                SortMode sort_mode)
+                                bool show_system, bool show_unknown)
 {
     /* Header */
     ui_draw_header(UI_BOT_W);
@@ -1233,23 +1179,22 @@ static void render_bottom_stats(const PldSummary *valid[], int n,
         const char *filter_label = show_unknown ? "All" :
                                    show_system  ? "Games+Sys" : "Games";
         ui_draw_textf(4, 184, UI_SCALE_SM, UI_COL_STATUS_TXT,
-                      "%d %s  [%s]  Sort: %s", n,
-                      show_system ? "titles" : "games", filter_label,
-                      sort_labels[sort_mode]);
+                      "%d %s  [%s]", n,
+                      show_system ? "titles" : "games", filter_label);
     }
 
     /* Controls hint */
     ui_draw_text_right(UI_BOT_W - 4, 198, UI_SCALE_SM, UI_COL_TEXT_DIM,
                        "A:select  START:menu  Up/Dn:scroll");
     ui_draw_text_right(UI_BOT_W - 4, 212, UI_SCALE_SM, UI_COL_TEXT_DIM,
-                       "L/R:sort  Y:filter  X:rank");
+                       "L/R:mode  Y:filter");
 }
 
 /* ── Rankings rendering ─────────────────────────────────────────── */
 
 static void render_rankings_top(const PldSummary *ranked[], int rank_count,
                                 int rank_sel, int rank_scroll,
-                                const u32 rank_metric[], RankingsTab tab,
+                                const u32 rank_metric[], ViewMode mode,
                                 float anim_t, float sel_pop)
 {
     /* Darker list background */
@@ -1259,11 +1204,10 @@ static void render_rankings_top(const PldSummary *ranked[], int rank_count,
     u32 max_val = 1; /* avoid div-by-zero */
     for (int i = 0; i < rank_count; i++) {
         u32 val = 0;
-        switch (tab) {
-            case RANK_PLAYTIME:    val = ranked[i]->total_secs;       break;
-            case RANK_LAUNCHES:    val = ranked[i]->launch_count;     break;
-            case RANK_AVG_SESSION: val = rank_metric[i];              break;
-            case RANK_RECENT:      val = ranked[i]->last_played_days; break;
+        switch (mode) {
+            case VIEW_PLAYTIME:    val = ranked[i]->total_secs;   break;
+            case VIEW_LAUNCHES:    val = ranked[i]->launch_count; break;
+            case VIEW_AVG_SESSION: val = rank_metric[i];          break;
             default: break;
         }
         if (val > max_val) max_val = val;
@@ -1303,11 +1247,10 @@ static void render_rankings_top(const PldSummary *ranked[], int rank_count,
 
         /* Proportional bar (full-width rounded, drawn behind everything) */
         u32 val = 0;
-        switch (tab) {
-            case RANK_PLAYTIME:    val = s->total_secs;       break;
-            case RANK_LAUNCHES:    val = s->launch_count;     break;
-            case RANK_AVG_SESSION: val = rank_metric[i];      break;
-            case RANK_RECENT:      val = s->last_played_days; break;
+        switch (mode) {
+            case VIEW_PLAYTIME:    val = s->total_secs;   break;
+            case VIEW_LAUNCHES:    val = s->launch_count; break;
+            case VIEW_AVG_SESSION: val = rank_metric[i];  break;
             default: break;
         }
         float bar_max_w = row_w;
@@ -1400,18 +1343,15 @@ static void render_rankings_top(const PldSummary *ranked[], int rank_count,
 
         /* Metric value right-aligned */
         char metric[24];
-        switch (tab) {
-            case RANK_PLAYTIME:
+        switch (mode) {
+            case VIEW_PLAYTIME:
                 pld_fmt_time(s->total_secs, metric, sizeof(metric));
                 break;
-            case RANK_LAUNCHES:
+            case VIEW_LAUNCHES:
                 snprintf(metric, sizeof(metric), "%u", (unsigned)s->launch_count);
                 break;
-            case RANK_AVG_SESSION:
+            case VIEW_AVG_SESSION:
                 pld_fmt_time(rank_metric[i], metric, sizeof(metric));
-                break;
-            case RANK_RECENT:
-                pld_fmt_date(s->last_played_days, metric, sizeof(metric));
                 break;
             default:
                 metric[0] = '\0';
@@ -1440,58 +1380,7 @@ static void render_rankings_top(const PldSummary *ranked[], int rank_count,
     ui_draw_header(UI_TOP_W);
     ui_draw_text(6, 4, UI_SCALE_HDR, UI_COL_HEADER_TXT, "Rankings");
     ui_draw_text_right(UI_TOP_W - 6, 4, UI_SCALE_HDR, UI_COL_HEADER_TXT,
-                       rank_tab_labels[tab]);
-}
-
-static void render_rankings_bot(const PldSummary *ranked[], int rank_count,
-                                const u32 rank_metric[], RankingsTab tab)
-{
-    /* Header */
-    ui_draw_header(UI_BOT_W);
-    ui_draw_text(6, 4, UI_SCALE_HDR, UI_COL_HEADER_TXT, "Rankings");
-
-    /* Aggregate stats for top N */
-    float y = 32.0f;
-    char vbuf[32];
-
-    ui_draw_textf(8, y, UI_SCALE_LG, UI_COL_TEXT, "Top %d %s",
-                  rank_count, rank_tab_labels[tab]);
-    y += 24.0f;
-
-    u32 total_time = 0;
-    u32 total_launches = 0;
-    for (int i = 0; i < rank_count; i++) {
-        total_time += ranked[i]->total_secs;
-        total_launches += ranked[i]->launch_count;
-    }
-
-    char tbuf[20];
-    pld_fmt_time(total_time, tbuf, sizeof(tbuf));
-    ui_draw_text(8, y, UI_SCALE_LG, UI_COL_TEXT, "Total playtime");
-    ui_draw_text_right(UI_BOT_W - 8, y, UI_SCALE_LG, UI_COL_TEXT_DIM, tbuf);
-    y += 24.0f;
-
-    ui_draw_text(8, y, UI_SCALE_LG, UI_COL_TEXT, "Total launches");
-    snprintf(vbuf, sizeof(vbuf), "%lu", (unsigned long)total_launches);
-    ui_draw_text_right(UI_BOT_W - 8, y, UI_SCALE_LG, UI_COL_TEXT_DIM, vbuf);
-    y += 24.0f;
-
-    {
-        u32 avg_secs = (total_launches > 0) ? (total_time / total_launches) : 0;
-        char avg_buf[20];
-        pld_fmt_time(avg_secs, avg_buf, sizeof(avg_buf));
-        ui_draw_text(8, y, UI_SCALE_LG, UI_COL_TEXT, "Avg session");
-        ui_draw_text_right(UI_BOT_W - 8, y, UI_SCALE_LG, UI_COL_TEXT_DIM, avg_buf);
-    }
-
-    /* Divider */
-    ui_draw_rect(0, 180, UI_BOT_W, 1, UI_COL_DIVIDER);
-    ui_draw_grad_v(0, 181, UI_BOT_W, 2,
-                   C2D_Color32(0x00, 0x00, 0x00, 0x10), UI_COL_SHADOW_NONE);
-
-    /* Controls hint */
-    ui_draw_text_right(UI_BOT_W - 4, 184, UI_SCALE_SM, UI_COL_TEXT_DIM,
-                       "L/R:tab  Up/Dn:scroll  A:detail  B:back");
+                       view_labels[mode]);
 }
 
 /* ── Detail screen ──────────────────────────────────────────────── */
@@ -2035,9 +1924,9 @@ int main(void)
     const PldSummary *valid[PLD_SUMMARY_COUNT];
     bool show_system  = false;  /* L key toggles; default = games only */
     bool show_unknown = false;  /* R key toggles; default = named titles only */
-    SortMode sort_mode = SORT_LAST_PLAYED;
+    ViewMode view_mode = VIEW_LAST_PLAYED;
     int n = collect_valid(&pld, valid, show_system, show_unknown);
-    sort_valid(valid, n, sort_mode, &sessions, &pld);
+    sort_valid(valid, n, view_mode, &sessions, &pld);
 
     /* Step 6: Load icon cache */
     run_with_spinner("Activity Log++", "Loading icon cache...", 6, 7,
@@ -2071,8 +1960,6 @@ int main(void)
     int  rank_anim_frame  = 0;
 
     /* Rankings state */
-    bool rankings_view = false;
-    RankingsTab rank_tab = RANK_PLAYTIME;
     int  rank_sel      = 0;
     int  prev_rank_sel = -1;
     float rank_sel_pop = 0.0f;
@@ -2115,120 +2002,6 @@ int main(void)
             ui_target_bot();
             render_pie_bot(pie_slices, pie_count, pie_total, anim_t);
             ui_end_frame();
-        } else if (rankings_view) {
-            /* ── Rankings view ── */
-            if (keys & KEY_B) {
-                rankings_view = false;
-                list_anim_frame = 0;
-            } else if (keys & KEY_L) {
-                rank_tab = (rank_tab + RANK_TAB_COUNT - 1) % RANK_TAB_COUNT;
-                rank_count = build_rankings(valid, n, rank_tab, &sessions, &pld,
-                                            ranked, rank_metric);
-                rank_sel = 0; rank_scroll = 0;
-                rank_anim_frame = 0;
-            } else if (keys & KEY_R) {
-                rank_tab = (rank_tab + 1) % RANK_TAB_COUNT;
-                rank_count = build_rankings(valid, n, rank_tab, &sessions, &pld,
-                                            ranked, rank_metric);
-                rank_sel = 0; rank_scroll = 0;
-                rank_anim_frame = 0;
-            }
-
-            /* Navigation with hold-to-repeat */
-            if (nav & KEY_DOWN) {
-                if (rank_sel < rank_count - 1) {
-                    rank_sel++;
-                    if (rank_sel >= rank_scroll + UI_VISIBLE_ROWS)
-                        rank_scroll = rank_sel - UI_VISIBLE_ROWS + 1;
-                }
-            } else if (nav & KEY_UP) {
-                if (rank_sel > 0) {
-                    rank_sel--;
-                    if (rank_sel < rank_scroll)
-                        rank_scroll = rank_sel;
-                }
-            }
-
-            if ((keys & KEY_A) && rank_count > 0) {
-                /* Open detail for ranked[rank_sel] */
-                const PldSummary *det_s = ranked[rank_sel];
-                const char *det_name = title_name_lookup(det_s->title_id);
-                if (!det_name) det_name = title_db_lookup(det_s->title_id);
-                char det_fallback[32];
-                if (!det_name) {
-                    snprintf(det_fallback, sizeof(det_fallback), "0x%016llX",
-                             (unsigned long long)det_s->title_id);
-                    det_name = det_fallback;
-                }
-
-                int *det_indices = malloc(sessions.count * sizeof(int));
-                int  det_count = 0;
-                if (det_indices) {
-                    for (int i = 0; i < sessions.count; i++) {
-                        if (sessions.entries[i].title_id == det_s->title_id)
-                            det_indices[det_count++] = i;
-                    }
-                    for (int i = 0; i < det_count - 1; i++) {
-                        for (int j = i + 1; j < det_count; j++) {
-                            if (sessions.entries[det_indices[i]].timestamp <
-                                sessions.entries[det_indices[j]].timestamp) {
-                                int tmp = det_indices[i];
-                                det_indices[i] = det_indices[j];
-                                det_indices[j] = tmp;
-                            }
-                        }
-                    }
-                }
-
-                int detail_scroll = 0;
-                bool detail_done = false;
-                nav_held_key = 0; nav_held_frames = 0;
-                while (!detail_done && aptMainLoop()) {
-                    hidScanInput();
-                    u32 dkeys = hidKeysDown();
-                    u32 dheld = hidKeysHeld();
-                    u32 dnav  = nav_tick(dkeys, dheld);
-                    if (dkeys & KEY_B) {
-                        detail_done = true;
-                    } else if (dnav & KEY_DOWN) {
-                        if (detail_scroll < det_count - DETAIL_VISIBLE)
-                            detail_scroll++;
-                    } else if (dnav & KEY_UP) {
-                        if (detail_scroll > 0)
-                            detail_scroll--;
-                    }
-
-                    if (!detail_done) {
-                        ui_begin_frame();
-                        ui_target_top();
-                        render_detail_top(det_s, det_name, &sessions,
-                                          det_indices, det_count,
-                                          detail_scroll);
-                        ui_target_bot();
-                        render_detail_bot();
-                        ui_end_frame();
-                    }
-                }
-                free(det_indices);
-            }
-
-            /* Render rankings */
-            if (rank_sel != prev_rank_sel) { rank_sel_pop = 0.0f; prev_rank_sel = rank_sel; }
-            rank_sel_pop = lerpf(rank_sel_pop, 1.0f, 0.25f);
-            if (rank_sel_pop > 0.99f) rank_sel_pop = 1.0f;
-
-            float rank_anim_t = (float)rank_anim_frame / 40.0f;
-            if (rank_anim_t > 2.0f) rank_anim_t = 2.0f;
-            rank_anim_frame++;
-
-            ui_begin_frame();
-            ui_target_top();
-            render_rankings_top(ranked, rank_count, rank_sel, rank_scroll,
-                                rank_metric, rank_tab, rank_anim_t,
-                                rank_sel_pop);
-            ui_target_bot();
-            render_rankings_bot(ranked, rank_count, rank_metric, rank_tab);
-            ui_end_frame();
         } else if (menu_open) {
             /* ── Menu open: navigate and confirm ── */
             if (keys & KEY_UP) {
@@ -2254,7 +2027,8 @@ int main(void)
                         run_sync_flow(&pld, &sessions, &sync_count,
                                       status_msg, sizeof(status_msg));
                         n = collect_valid(&pld, valid, show_system, show_unknown);
-                        sort_valid(valid, n, sort_mode, &sessions, &pld);
+                        view_mode = VIEW_LAST_PLAYED;
+                        sort_valid(valid, n, view_mode, &sessions, &pld);
                         /* Fetch icons for any titles that arrived from the
                          * sync partner and aren't already in the store. */
                         {
@@ -2342,7 +2116,8 @@ int main(void)
                                             pld      = rst_pld;
                                             sessions = rst_sessions;
                                             n = collect_valid(&pld, valid, show_system, show_unknown);
-                                            sort_valid(valid, n, sort_mode, &sessions, &pld);
+                                            view_mode = VIEW_LAST_PLAYED;
+                                            sort_valid(valid, n, view_mode, &sessions, &pld);
                                             sel = 0; scroll_top = 0; scroll_y = 0.0f;
                                             list_anim_frame = 0;
                                         } else {
@@ -2422,7 +2197,8 @@ int main(void)
                                     pld      = rr_args.pld;
                                     sessions = rr_args.sessions;
                                     n = collect_valid(&pld, valid, show_system, show_unknown);
-                                    sort_valid(valid, n, sort_mode, &sessions, &pld);
+                                    view_mode = VIEW_LAST_PLAYED;
+                                    sort_valid(valid, n, view_mode, &sessions, &pld);
                                     sel = 0; scroll_top = 0; scroll_y = 0.0f;
                                     list_anim_frame = 0;
                                     sync_count = 0;
@@ -2449,14 +2225,7 @@ int main(void)
                 menu_sel  = 0;
             }
 
-            else if (keys & KEY_X) {
-                rankings_view = true;
-                rank_tab = RANK_PLAYTIME;
-                rank_sel = 0; rank_scroll = 0;
-                rank_anim_frame = 0;
-                rank_count = build_rankings(valid, n, rank_tab, &sessions, &pld,
-                                            ranked, rank_metric);
-            } else if (keys & KEY_Y) {
+            else if (keys & KEY_Y) {
                 /* Cycle filter: games → games+sys → all → games */
                 if (!show_system && !show_unknown) {
                     show_system = true;  show_unknown = false;
@@ -2466,132 +2235,197 @@ int main(void)
                     show_system = false; show_unknown = false;
                 }
                 n = collect_valid(&pld, valid, show_system, show_unknown);
-                sort_valid(valid, n, sort_mode, &sessions, &pld);
-                sel = 0; scroll_top = 0; scroll_y = 0.0f;
+                if (view_is_rank(view_mode)) {
+                    rank_count = build_rankings(valid, n, view_mode, &sessions, &pld,
+                                                ranked, rank_metric);
+                    rank_sel = 0; rank_scroll = 0;
+                    rank_anim_frame = 0;
+                } else {
+                    sort_valid(valid, n, view_mode, &sessions, &pld);
+                    sel = 0; scroll_top = 0; scroll_y = 0.0f;
+                    list_anim_frame = 0;
+                }
                 status_msg[0] = '\0';
-                list_anim_frame = 0;
             } else if (keys & KEY_L) {
-                sort_mode = (sort_mode + SORT_COUNT - 1) % SORT_COUNT;
-                sort_valid(valid, n, sort_mode, &sessions, &pld);
-                sel = 0; scroll_top = 0; scroll_y = 0.0f;
+                view_mode = (view_mode + VIEW_COUNT - 1) % VIEW_COUNT;
+                if (view_is_rank(view_mode)) {
+                    rank_count = build_rankings(valid, n, view_mode, &sessions, &pld,
+                                                ranked, rank_metric);
+                    rank_sel = 0; rank_scroll = 0;
+                    rank_anim_frame = 0;
+                } else {
+                    sort_valid(valid, n, view_mode, &sessions, &pld);
+                    sel = 0; scroll_top = 0; scroll_y = 0.0f;
+                    list_anim_frame = 0;
+                }
                 status_msg[0] = '\0';
-                list_anim_frame = 0;
             } else if (keys & KEY_R) {
-                sort_mode = (sort_mode + 1) % SORT_COUNT;
-                sort_valid(valid, n, sort_mode, &sessions, &pld);
-                sel = 0; scroll_top = 0; scroll_y = 0.0f;
+                view_mode = (view_mode + 1) % VIEW_COUNT;
+                if (view_is_rank(view_mode)) {
+                    rank_count = build_rankings(valid, n, view_mode, &sessions, &pld,
+                                                ranked, rank_metric);
+                    rank_sel = 0; rank_scroll = 0;
+                    rank_anim_frame = 0;
+                } else {
+                    sort_valid(valid, n, view_mode, &sessions, &pld);
+                    sel = 0; scroll_top = 0; scroll_y = 0.0f;
+                    list_anim_frame = 0;
+                }
                 status_msg[0] = '\0';
-                list_anim_frame = 0;
             }
 
             /* Navigation with hold-to-repeat */
-            if (nav & KEY_DOWN) {
-                if (sel < n - 1) {
-                    sel++;
-                    if (sel >= scroll_top + UI_VISIBLE_ROWS)
-                        scroll_top = sel - UI_VISIBLE_ROWS + 1;
+            if (view_is_rank(view_mode)) {
+                if (nav & KEY_DOWN) {
+                    if (rank_sel < rank_count - 1) {
+                        rank_sel++;
+                        if (rank_sel >= rank_scroll + UI_VISIBLE_ROWS)
+                            rank_scroll = rank_sel - UI_VISIBLE_ROWS + 1;
+                    }
+                } else if (nav & KEY_UP) {
+                    if (rank_sel > 0) {
+                        rank_sel--;
+                        if (rank_sel < rank_scroll)
+                            rank_scroll = rank_sel;
+                    }
                 }
-            } else if (nav & KEY_UP) {
-                if (sel > 0) {
-                    sel--;
-                    if (sel < scroll_top)
-                        scroll_top = sel;
+            } else {
+                if (nav & KEY_DOWN) {
+                    if (sel < n - 1) {
+                        sel++;
+                        if (sel >= scroll_top + UI_VISIBLE_ROWS)
+                            scroll_top = sel - UI_VISIBLE_ROWS + 1;
+                    }
+                } else if (nav & KEY_UP) {
+                    if (sel > 0) {
+                        sel--;
+                        if (sel < scroll_top)
+                            scroll_top = sel;
+                    }
                 }
             }
 
-            if ((keys & KEY_A) && n > 0) {
-                /* ── Detail screen sub-loop ── */
-                const PldSummary *det_s = valid[sel];
-                const char *det_name = title_name_lookup(det_s->title_id);
-                if (!det_name) det_name = title_db_lookup(det_s->title_id);
-                char det_fallback[32];
-                if (!det_name) {
-                    snprintf(det_fallback, sizeof(det_fallback), "0x%016llX",
-                             (unsigned long long)det_s->title_id);
-                    det_name = det_fallback;
+            /* Detail screen — select source based on view mode */
+            {
+                const PldSummary *det_s = NULL;
+                if (view_is_rank(view_mode)) {
+                    if ((keys & KEY_A) && rank_count > 0)
+                        det_s = ranked[rank_sel];
+                } else {
+                    if ((keys & KEY_A) && n > 0)
+                        det_s = valid[sel];
                 }
-
-                /* Build filtered session index list, sorted by timestamp desc */
-                int *det_indices = malloc(sessions.count * sizeof(int));
-                int  det_count = 0;
-                if (det_indices) {
-                    for (int i = 0; i < sessions.count; i++) {
-                        if (sessions.entries[i].title_id == det_s->title_id)
-                            det_indices[det_count++] = i;
+                if (det_s) {
+                    const char *det_name = title_name_lookup(det_s->title_id);
+                    if (!det_name) det_name = title_db_lookup(det_s->title_id);
+                    char det_fallback[32];
+                    if (!det_name) {
+                        snprintf(det_fallback, sizeof(det_fallback), "0x%016llX",
+                                 (unsigned long long)det_s->title_id);
+                        det_name = det_fallback;
                     }
-                    /* Sort descending by timestamp (most recent first) */
-                    for (int i = 0; i < det_count - 1; i++) {
-                        for (int j = i + 1; j < det_count; j++) {
-                            if (sessions.entries[det_indices[i]].timestamp <
-                                sessions.entries[det_indices[j]].timestamp) {
-                                int tmp = det_indices[i];
-                                det_indices[i] = det_indices[j];
-                                det_indices[j] = tmp;
+
+                    /* Build filtered session index list, sorted by timestamp desc */
+                    int *det_indices = malloc(sessions.count * sizeof(int));
+                    int  det_count = 0;
+                    if (det_indices) {
+                        for (int i = 0; i < sessions.count; i++) {
+                            if (sessions.entries[i].title_id == det_s->title_id)
+                                det_indices[det_count++] = i;
+                        }
+                        for (int i = 0; i < det_count - 1; i++) {
+                            for (int j = i + 1; j < det_count; j++) {
+                                if (sessions.entries[det_indices[i]].timestamp <
+                                    sessions.entries[det_indices[j]].timestamp) {
+                                    int tmp = det_indices[i];
+                                    det_indices[i] = det_indices[j];
+                                    det_indices[j] = tmp;
+                                }
                             }
                         }
                     }
-                }
 
-                int detail_scroll = 0;
-                bool detail_done = false;
-                nav_held_key = 0; nav_held_frames = 0;
-                while (!detail_done && aptMainLoop()) {
-                    hidScanInput();
-                    u32 dkeys = hidKeysDown();
-                    u32 dheld = hidKeysHeld();
-                    u32 dnav  = nav_tick(dkeys, dheld);
-                    if (dkeys & KEY_B) {
-                        detail_done = true;
-                    } else if (dnav & KEY_DOWN) {
-                        if (detail_scroll < det_count - DETAIL_VISIBLE)
-                            detail_scroll++;
-                    } else if (dnav & KEY_UP) {
-                        if (detail_scroll > 0)
-                            detail_scroll--;
-                    }
+                    int detail_scroll = 0;
+                    bool detail_done = false;
+                    nav_held_key = 0; nav_held_frames = 0;
+                    while (!detail_done && aptMainLoop()) {
+                        hidScanInput();
+                        u32 dkeys = hidKeysDown();
+                        u32 dheld = hidKeysHeld();
+                        u32 dnav  = nav_tick(dkeys, dheld);
+                        if (dkeys & KEY_B) {
+                            detail_done = true;
+                        } else if (dnav & KEY_DOWN) {
+                            if (detail_scroll < det_count - DETAIL_VISIBLE)
+                                detail_scroll++;
+                        } else if (dnav & KEY_UP) {
+                            if (detail_scroll > 0)
+                                detail_scroll--;
+                        }
 
-                    if (!detail_done) {
-                        ui_begin_frame();
-                        ui_target_top();
-                        render_detail_top(det_s, det_name, &sessions,
-                                          det_indices, det_count,
-                                          detail_scroll);
-                        ui_target_bot();
-                        render_detail_bot();
-                        ui_end_frame();
+                        if (!detail_done) {
+                            ui_begin_frame();
+                            ui_target_top();
+                            render_detail_top(det_s, det_name, &sessions,
+                                              det_indices, det_count,
+                                              detail_scroll);
+                            ui_target_bot();
+                            render_detail_bot();
+                            ui_end_frame();
+                        }
                     }
+                    free(det_indices);
                 }
-                free(det_indices);
             }
         }
 
-        if (!charts_view && !rankings_view) {
-            /* Smooth scroll interpolation */
-            float scroll_target = (float)scroll_top * UI_ROW_PITCH;
-            scroll_y = lerpf(scroll_y, scroll_target, 0.3f);
-            if (scroll_y - scroll_target < 0.5f && scroll_y - scroll_target > -0.5f)
-                scroll_y = scroll_target;
+        if (!charts_view) {
+            if (view_is_rank(view_mode)) {
+                /* Rank mode rendering */
+                if (rank_sel != prev_rank_sel) { rank_sel_pop = 0.0f; prev_rank_sel = rank_sel; }
+                rank_sel_pop = lerpf(rank_sel_pop, 1.0f, 0.25f);
+                if (rank_sel_pop > 0.99f) rank_sel_pop = 1.0f;
 
-            /* Selection pop animation */
-            if (sel != prev_sel) { sel_pop = 0.0f; prev_sel = sel; }
-            sel_pop = lerpf(sel_pop, 1.0f, 0.25f);
-            if (sel_pop > 0.99f) sel_pop = 1.0f;
+                float rank_anim_t = (float)rank_anim_frame / 40.0f;
+                if (rank_anim_t > 2.0f) rank_anim_t = 2.0f;
+                rank_anim_frame++;
 
-            float list_anim_t = (float)list_anim_frame / 40.0f;
-            if (list_anim_t > 2.0f) list_anim_t = 2.0f;
-            list_anim_frame++;
+                ui_begin_frame();
+                ui_target_top();
+                render_rankings_top(ranked, rank_count, rank_sel, rank_scroll,
+                                    rank_metric, view_mode, rank_anim_t,
+                                    rank_sel_pop);
+                if (menu_open) render_menu(menu_sel);
+                ui_target_bot();
+                render_bottom_stats(valid, n, &sessions, sync_count,
+                                    status_msg, show_system, show_unknown);
+                ui_end_frame();
+            } else {
+                /* Sort mode rendering */
+                float scroll_target = (float)scroll_top * UI_ROW_PITCH;
+                scroll_y = lerpf(scroll_y, scroll_target, 0.3f);
+                if (scroll_y - scroll_target < 0.5f && scroll_y - scroll_target > -0.5f)
+                    scroll_y = scroll_target;
 
-            ui_begin_frame();
-            ui_target_top();
-            render_game_list(valid, n, sel, scroll_y, &sessions, status_msg,
-                             show_system, show_unknown, sort_mode, list_anim_t,
-                             sel_pop);
-            if (menu_open) render_menu(menu_sel);
-            ui_target_bot();
-            render_bottom_stats(valid, n, &sessions, sync_count,
-                                status_msg, show_system, show_unknown,
-                                sort_mode);
-            ui_end_frame();
+                if (sel != prev_sel) { sel_pop = 0.0f; prev_sel = sel; }
+                sel_pop = lerpf(sel_pop, 1.0f, 0.25f);
+                if (sel_pop > 0.99f) sel_pop = 1.0f;
+
+                float list_anim_t = (float)list_anim_frame / 40.0f;
+                if (list_anim_t > 2.0f) list_anim_t = 2.0f;
+                list_anim_frame++;
+
+                ui_begin_frame();
+                ui_target_top();
+                render_game_list(valid, n, sel, scroll_y, &sessions, status_msg,
+                                 show_system, show_unknown, view_mode, list_anim_t,
+                                 sel_pop);
+                if (menu_open) render_menu(menu_sel);
+                ui_target_bot();
+                render_bottom_stats(valid, n, &sessions, sync_count,
+                                    status_msg, show_system, show_unknown);
+                ui_end_frame();
+            }
         }
     }
 
