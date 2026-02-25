@@ -104,6 +104,118 @@ void ui_draw_circle(float cx, float cy, float r, u32 color) {
     }
 }
 
+void ui_draw_rounded_rect(float x, float y, float w, float h, float r, u32 color) {
+    /* Clamp radius so it doesn't exceed half the dimension */
+    if (r > w * 0.5f) r = w * 0.5f;
+    if (r > h * 0.5f) r = h * 0.5f;
+
+    /* 3 rectangles forming the cross shape */
+    C2D_DrawRectSolid(x + r, y,     0.5f, w - 2*r, h,       color); /* horizontal strip */
+    C2D_DrawRectSolid(x,     y + r, 0.5f, r,       h - 2*r, color); /* left strip       */
+    C2D_DrawRectSolid(x + w - r, y + r, 0.5f, r, h - 2*r, color);  /* right strip      */
+
+    /* 4 quarter-circle fans (~15° steps = 6 triangles per corner) */
+    const float PI_2 = 1.5707963f; /* pi/2 */
+    const int SEGS = 6;
+    float step = PI_2 / (float)SEGS;
+
+    /* corner centres */
+    float cx[4] = { x + r,     x + w - r, x + w - r, x + r     };
+    float cy[4] = { y + r,     y + r,     y + h - r, y + h - r  };
+    /* start angles: TL=PI, TR=3PI/2, BR=0, BL=PI/2 */
+    float sa[4] = { 3.14159265f, 3*PI_2, 0.0f, PI_2 };
+
+    for (int c = 0; c < 4; c++) {
+        float a = sa[c];
+        for (int s = 0; s < SEGS; s++) {
+            float a1 = a + step;
+            C2D_DrawTriangle(
+                cx[c], cy[c], color,
+                cx[c] + r * cosf(a),  cy[c] + r * sinf(a),  color,
+                cx[c] + r * cosf(a1), cy[c] + r * sinf(a1), color,
+                0.5f);
+            a = a1;
+        }
+    }
+}
+
+void ui_draw_drop_shadow(float x, float y, float w, float h, float r, u8 base_alpha) {
+    /* Multi-layer diffuse shadow: 6 concentric rounded rects fading outward.
+     * Each layer adds ~0.7px spread and a small downward offset.
+     * Alpha follows an inverse-square falloff for a smooth gradient. */
+    const int LAYERS = 6;
+    for (int i = LAYERS; i >= 1; i--) {
+        float t = (float)i / (float)LAYERS;          /* 1.0 = outermost */
+        float spread = (float)i * 0.7f;
+        float off_y  = (float)i * 0.4f;
+        /* Inverse-square falloff: inner layers get most of the alpha */
+        u8 a = (u8)((u32)base_alpha * (1.0f - t * t) * 0.18f);
+        if (a == 0) continue;
+        ui_draw_rounded_rect(x - spread + 1, y + off_y,
+                             w + 2 * spread, h + 2 * spread,
+                             r + spread,
+                             C2D_Color32(0x00, 0x00, 0x00, a));
+    }
+}
+
+void ui_draw_rounded_mask(float x, float y, float w, float h, float r, u32 bg) {
+    /* Draw background-colored corner masks to fake rounded corners on images.
+     * For each corner, a triangle fan from the square corner through the arc
+     * fills the area outside the rounded edge. */
+    if (r > w * 0.5f) r = w * 0.5f;
+    if (r > h * 0.5f) r = h * 0.5f;
+
+    const float PI   = 3.14159265f;
+    const float PI_2 = 1.5707963f;
+    const int SEGS = 6;
+    float step = PI_2 / (float)SEGS;
+
+    /* corner square corners (the actual square vertex to fan from) */
+    float sx[4] = { x,         x + w,     x + w,     x         };
+    float sy[4] = { y,         y,         y + h,     y + h     };
+    /* arc centres */
+    float cx[4] = { x + r,     x + w - r, x + w - r, x + r     };
+    float cy[4] = { y + r,     y + r,     y + h - r, y + h - r  };
+    /* start angles: TL=PI, TR=3PI/2, BR=0, BL=PI/2 */
+    float sa[4] = { PI, 3*PI_2, 0.0f, PI_2 };
+
+    for (int c = 0; c < 4; c++) {
+        float a = sa[c];
+        /* First point on arc */
+        float px = cx[c] + r * cosf(a);
+        float py = cy[c] + r * sinf(a);
+        for (int s = 0; s < SEGS; s++) {
+            float a1 = a + step;
+            float nx = cx[c] + r * cosf(a1);
+            float ny = cy[c] + r * sinf(a1);
+            C2D_DrawTriangle(sx[c], sy[c], bg, px, py, bg, nx, ny, bg, 0.5f);
+            px = nx;
+            py = ny;
+            a = a1;
+        }
+    }
+}
+
+void ui_draw_grad_v(float x, float y, float w, float h, u32 top_col, u32 bot_col) {
+    C2D_DrawRectangle(x, y, 0.5f, w, h, top_col, top_col, bot_col, bot_col);
+}
+
+void ui_draw_header(float width) {
+    /* Gradient blue bar */
+    ui_draw_grad_v(0, 0, width, UI_HEADER_H, UI_COL_HEADER_TOP, UI_COL_HEADER_BOT);
+    /* Gloss highlight on upper half */
+    ui_draw_grad_v(0, 0, width, UI_HEADER_H / 2.0f, UI_COL_GLOSS, UI_COL_GLOSS_NONE);
+    /* 3px drop shadow below */
+    ui_draw_grad_v(0, UI_HEADER_H, width, 3, UI_COL_SHADOW, UI_COL_SHADOW_NONE);
+}
+
+void ui_draw_status_bar(float width) {
+    /* 3px upward shadow above the bar */
+    ui_draw_grad_v(0, 220 - 3, width, 3, UI_COL_SHADOW_NONE, UI_COL_SHADOW);
+    /* Gradient gray bar */
+    ui_draw_grad_v(0, 220, width, UI_STATUS_H, UI_COL_STATUS_TOP, UI_COL_STATUS_BOT);
+}
+
 float ui_text_width(const char *str, float scale) {
     C2D_Text t;
     C2D_TextParse(&t, s_textbuf, str);

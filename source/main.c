@@ -348,7 +348,7 @@ static void render_pie_top(const PieSlice slices[], int slice_count, u32 total,
                            float anim_t)
 {
     /* Header */
-    ui_draw_rect(0, 0, UI_TOP_W, UI_HEADER_H, UI_COL_HEADER);
+    ui_draw_header(UI_TOP_W);
     ui_draw_text(6, 4, UI_SCALE_HDR, UI_COL_HEADER_TXT, "Charts: Pie");
 
     if (slice_count == 0 || total == 0) {
@@ -419,7 +419,7 @@ static void render_pie_top(const PieSlice slices[], int slice_count, u32 total,
     }
 
     /* Status bar */
-    ui_draw_rect(0, 220, UI_TOP_W, UI_STATUS_H, UI_COL_STATUS_BG);
+    ui_draw_status_bar(UI_TOP_W);
     ui_draw_text_right(396, 222, UI_SCALE_SM, UI_COL_STATUS_TXT, "L/R:tab  B:back");
 }
 
@@ -427,7 +427,7 @@ static void render_pie_bot(const PieSlice slices[], int slice_count, u32 total,
                            float anim_t)
 {
     /* Header */
-    ui_draw_rect(0, 0, UI_BOT_W, UI_HEADER_H, UI_COL_HEADER);
+    ui_draw_header(UI_BOT_W);
     ui_draw_text(6, 4, UI_SCALE_HDR, UI_COL_HEADER_TXT, "Charts");
 
     if (slice_count == 0 || total == 0) {
@@ -490,13 +490,15 @@ static void render_pie_bot(const PieSlice slices[], int slice_count, u32 total,
     float y = y_last;
     y += 2.0f;
     ui_draw_rect(0, y, UI_BOT_W, 1, UI_COL_DIVIDER);
+    ui_draw_grad_v(0, y + 1, UI_BOT_W, 2,
+                   C2D_Color32(0x00, 0x00, 0x00, 0x10), UI_COL_SHADOW_NONE);
     y += 4.0f;
     pld_fmt_time(total, t_buf, sizeof(t_buf));
     ui_draw_text(8, y, UI_SCALE_SM, UI_COL_TEXT, "Total");
     ui_draw_text_right(UI_BOT_W - 8, y, UI_SCALE_SM, UI_COL_TEXT, t_buf);
 
     /* Controls hint */
-    ui_draw_rect(0, 220, UI_BOT_W, UI_STATUS_H, UI_COL_STATUS_BG);
+    ui_draw_status_bar(UI_BOT_W);
     ui_draw_text_right(UI_BOT_W - 4, 222, UI_SCALE_SM, UI_COL_STATUS_TXT,
                        "L/R:tab  B:back");
 }
@@ -507,12 +509,12 @@ static void render_bar_top(const PieSlice slices[], int slice_count, u32 total,
                            float anim_t)
 {
     /* Header */
-    ui_draw_rect(0, 0, UI_TOP_W, UI_HEADER_H, UI_COL_HEADER);
+    ui_draw_header(UI_TOP_W);
     ui_draw_text(6, 4, UI_SCALE_HDR, UI_COL_HEADER_TXT, "Charts: Bar");
 
     if (slice_count == 0 || total == 0) {
         ui_draw_text(8, 36, UI_SCALE_LG, UI_COL_TEXT_DIM, "No playtime data");
-        ui_draw_rect(0, 220, UI_TOP_W, UI_STATUS_H, UI_COL_STATUS_BG);
+        ui_draw_status_bar(UI_TOP_W);
         ui_draw_text_right(396, 222, UI_SCALE_SM, UI_COL_STATUS_TXT, "L/R:tab  B:back");
         return;
     }
@@ -577,7 +579,7 @@ static void render_bar_top(const PieSlice slices[], int slice_count, u32 total,
     }
 
     /* Status bar */
-    ui_draw_rect(0, 220, UI_TOP_W, UI_STATUS_H, UI_COL_STATUS_BG);
+    ui_draw_status_bar(UI_TOP_W);
     ui_draw_text_right(396, 222, UI_SCALE_SM, UI_COL_STATUS_TXT, "L/R:tab  B:back");
 }
 
@@ -707,7 +709,7 @@ static void draw_message_screen_ex(const char *title, const char *body,
     ui_begin_frame();
 
     ui_target_top();
-    ui_draw_rect(0, 0, UI_TOP_W, UI_HEADER_H, UI_COL_HEADER);
+    ui_draw_header(UI_TOP_W);
     ui_draw_text(6, 4, UI_SCALE_HDR, UI_COL_HEADER_TXT, title);
 
     /* Draw body lines split on '\n' */
@@ -727,7 +729,7 @@ static void draw_message_screen_ex(const char *title, const char *body,
         draw_spinner(UI_TOP_W / 2.0f, 180.0f);
 
     ui_target_bot();
-    ui_draw_rect(0, 0, UI_BOT_W, UI_HEADER_H, UI_COL_HEADER);
+    ui_draw_header(UI_BOT_W);
     ui_draw_text(6, 4, UI_SCALE_HDR, UI_COL_HEADER_TXT, "Activity Log++");
 
     ui_end_frame();
@@ -749,7 +751,7 @@ static void draw_progress_screen(const char *title, const char *body,
     ui_begin_frame();
 
     ui_target_top();
-    ui_draw_rect(0, 0, UI_TOP_W, UI_HEADER_H, UI_COL_HEADER);
+    ui_draw_header(UI_TOP_W);
     ui_draw_text(6, 4, UI_SCALE_HDR, UI_COL_HEADER_TXT, title);
 
     /* Draw body lines split on '\n' */
@@ -768,7 +770,7 @@ static void draw_progress_screen(const char *title, const char *body,
     draw_spinner(UI_TOP_W / 2.0f, 180.0f);
 
     ui_target_bot();
-    ui_draw_rect(0, 0, UI_BOT_W, UI_HEADER_H, UI_COL_HEADER);
+    ui_draw_header(UI_BOT_W);
     ui_draw_text(6, 4, UI_SCALE_HDR, UI_COL_HEADER_TXT, "Activity Log++");
 
     ui_end_frame();
@@ -1009,22 +1011,26 @@ static void render_game_list(const PldSummary *const valid[], int n,
                              const PldSessionLog *sessions,
                              const char *status_msg,
                              bool show_system, bool show_unknown,
-                             SortMode sort_mode, float anim_t)
+                             SortMode sort_mode, float anim_t,
+                             float sel_pop)
 {
+    /* Darker list background */
+    ui_draw_rect(0, UI_LIST_Y, UI_TOP_W, UI_LIST_BOT - UI_LIST_Y, UI_COL_LIST_BG);
+
     /* Visible rows (drawn first so header paints over any overlap) */
     char t_buf[20];
     char d0_buf[12];
     char d1_buf[12];
     char fallback[32];
 
-    int first_vis = (int)(scroll_y / UI_ROW_H);
+    int first_vis = (int)(scroll_y / UI_ROW_PITCH);
     if (first_vis < 0) first_vis = 0;
-    int last_vis = first_vis + UI_VISIBLE_ROWS + 1; /* +1 for partial row */
+    int last_vis = first_vis + UI_VISIBLE_ROWS + 2; /* +2 for partial rows */
     if (last_vis > n) last_vis = n;
 
     for (int i = first_vis; i < last_vis; i++) {
-        float row_y = UI_LIST_Y + (float)i * UI_ROW_H - scroll_y;
-        if (row_y + UI_ROW_H < UI_LIST_Y || row_y >= UI_LIST_BOT) continue;
+        float row_y = UI_LIST_Y + (float)i * UI_ROW_PITCH - scroll_y;
+        if (row_y + UI_ROW_H + UI_ROW_GAP < UI_LIST_Y || row_y >= UI_LIST_BOT) continue;
 
         /* Per-row cascade fade + vertical slide */
         int vis_row = i - first_vis;
@@ -1038,11 +1044,6 @@ static void render_game_list(const PldSummary *const valid[], int n,
         if (alpha == 0) continue;
         float y_off = (1.0f - reveal) * -8.0f;
         row_y += y_off;
-
-        u32 bg = (i == sel) ? UI_COL_ROW_SEL :
-                 (i % 2 == 0) ? UI_COL_BG : UI_COL_ROW_ALT;
-        ui_draw_rect(0, row_y, UI_TOP_W, UI_ROW_H,
-                     (bg & 0x00FFFFFF) | ((u32)alpha << 24));
 
         const PldSummary *s = valid[i];
 
@@ -1058,48 +1059,91 @@ static void render_game_list(const PldSummary *const valid[], int n,
         pld_fmt_date(s->first_played_days, d0_buf, sizeof(d0_buf));
         pld_fmt_date(s->last_played_days,  d1_buf, sizeof(d1_buf));
 
+        /* Selection pop: grow row and intensify shadow */
+        bool selected = (i == sel);
+        float pop = selected ? sel_pop : 0.0f;
+        float grow = pop * 4.0f;  /* up to 4px total growth */
+        row_y -= grow * 0.5f;     /* center the growth vertically */
+        float row_h = (float)UI_ROW_H + grow;
+
+        /* Icon — standalone, left-aligned outside the card */
+        float icon_sz = (float)ICON_DRAW_SIZE + grow; /* uniform scale */
+        float icon_x = (float)UI_ROW_MARGIN - grow * 0.5f; /* center growth */
+        float icon_y = row_y; /* already shifted by grow */
+        float icon_r = (float)UI_ROW_RADIUS;
         C2D_Image icon;
+
+        /* Shadow intensity: animated for selected rows */
+        u8 sh_base = (u8)(0x38 + (u32)(pop * (0x70 - 0x38)));
+        u8 sh_alpha = (u8)((u32)sh_base * alpha / 255);
+
+        /* Icon drop shadow */
+        ui_draw_drop_shadow(icon_x, icon_y, icon_sz, icon_sz, icon_r, sh_alpha);
+
         if (title_icon_get(s->title_id, &icon)) {
             if (alpha == 255)
-                ui_draw_image(icon, 6.0f, row_y, ICON_DRAW_SIZE);
+                ui_draw_image(icon, icon_x, icon_y, icon_sz);
             else
-                ui_draw_image_alpha(icon, 6.0f, row_y, ICON_DRAW_SIZE, alpha);
+                ui_draw_image_alpha(icon, icon_x, icon_y, icon_sz, alpha);
+            /* Rounded corner masks over icon */
+            ui_draw_rounded_mask(icon_x, icon_y, icon_sz, icon_sz,
+                                 icon_r, UI_COL_LIST_BG);
         } else {
-            /* Letter-initial fallback: colored square with the first letter */
             const u32 kIconColors[] = {
-                C2D_Color32(0x4A, 0x86, 0xC8, 0xFF),  /* Activity blue */
-                C2D_Color32(0xC8, 0x6A, 0x4A, 0xFF),  /* orange        */
-                C2D_Color32(0x4A, 0xC8, 0x78, 0xFF),  /* green         */
-                C2D_Color32(0xC8, 0x4A, 0x8A, 0xFF),  /* pink          */
-                C2D_Color32(0x8A, 0x4A, 0xC8, 0xFF),  /* purple        */
-                C2D_Color32(0xC8, 0xBE, 0x4A, 0xFF),  /* yellow        */
-                C2D_Color32(0x4A, 0xB4, 0xC8, 0xFF),  /* teal          */
-                C2D_Color32(0xC8, 0x4A, 0x4A, 0xFF),  /* red           */
+                C2D_Color32(0x4A, 0x86, 0xC8, 0xFF),
+                C2D_Color32(0xC8, 0x6A, 0x4A, 0xFF),
+                C2D_Color32(0x4A, 0xC8, 0x78, 0xFF),
+                C2D_Color32(0xC8, 0x4A, 0x8A, 0xFF),
+                C2D_Color32(0x8A, 0x4A, 0xC8, 0xFF),
+                C2D_Color32(0xC8, 0xBE, 0x4A, 0xFF),
+                C2D_Color32(0x4A, 0xB4, 0xC8, 0xFF),
+                C2D_Color32(0xC8, 0x4A, 0x4A, 0xFF),
             };
             u32 icon_col = kIconColors[(s->title_id >> 8) % 8];
-            ui_draw_rect(6.0f, row_y, (float)ICON_DRAW_SIZE, (float)ICON_DRAW_SIZE,
-                         (icon_col & 0x00FFFFFF) | ((u32)alpha << 24));
+            ui_draw_rounded_rect(icon_x, icon_y, icon_sz, icon_sz, icon_r,
+                                 (icon_col & 0x00FFFFFF) | ((u32)alpha << 24));
             char letter[2] = { name[0] ? name[0] : '?', '\0' };
-            ui_draw_text(18.0f, row_y + 14.0f, UI_SCALE_LG,
+            ui_draw_text(icon_x + 12.0f, icon_y + 14.0f, UI_SCALE_LG,
                          (0xFFFFFFFF & 0x00FFFFFF) | ((u32)alpha << 24), letter);
+        }
+
+        /* Card — to the right of the icon */
+        float card_x = (float)(UI_ROW_MARGIN + ICON_DRAW_SIZE + UI_ICON_GAP);
+        float card_w = (float)(UI_TOP_W - UI_ROW_MARGIN) - card_x;
+        float card_r = (float)UI_ROW_RADIUS;
+
+        /* Card drop shadow */
+        ui_draw_drop_shadow(card_x, row_y, card_w, row_h, card_r, sh_alpha);
+
+        if (selected) {
+            ui_draw_rounded_rect(card_x - 1, row_y - 1, card_w + 2, row_h + 2,
+                                 card_r + 1,
+                                 (UI_COL_SEL_BORDER & 0x00FFFFFF) | ((u32)alpha << 24));
+            ui_draw_rounded_rect(card_x, row_y, card_w, row_h, card_r,
+                                 (UI_COL_ROW_SEL & 0x00FFFFFF) | ((u32)alpha << 24));
+        } else {
+            ui_draw_rounded_rect(card_x, row_y, card_w, row_h, card_r,
+                                 (UI_COL_CARD & 0x00FFFFFF) | ((u32)alpha << 24));
         }
 
         u32 text_col     = (UI_COL_TEXT     & 0x00FFFFFF) | ((u32)alpha << 24);
         u32 text_dim_col = (UI_COL_TEXT_DIM & 0x00FFFFFF) | ((u32)alpha << 24);
-        ui_draw_text(60.0f, row_y + 8, UI_SCALE_LG, text_col, name);
-        ui_draw_text_right(394, row_y + 8, UI_SCALE_LG, text_dim_col, t_buf);
+        float text_x = card_x + 6.0f;
+        float text_r = (float)(UI_TOP_W - UI_ROW_MARGIN) - 6.0f;
+        ui_draw_text(text_x, row_y + 8, UI_SCALE_LG, text_col, name);
+        ui_draw_text_right(text_r, row_y + 8, UI_SCALE_LG, text_dim_col, t_buf);
         {
             u32 avg_secs = (s->launch_count > 0) ? (s->total_secs / s->launch_count) : 0;
             char avg_buf[20];
             pld_fmt_time(avg_secs, avg_buf, sizeof(avg_buf));
-            ui_draw_textf(60.0f, row_y + 28, UI_SCALE_SM, text_dim_col,
+            ui_draw_textf(text_x, row_y + 28, UI_SCALE_SM, text_dim_col,
                           "L:%u  Avg:%s  %s-%s",
                           (unsigned)s->launch_count, avg_buf, d0_buf, d1_buf);
         }
     }
 
     /* Header bar (drawn after rows so it covers any partial overlap) */
-    ui_draw_rect(0, 0, UI_TOP_W, UI_HEADER_H, UI_COL_HEADER);
+    ui_draw_header(UI_TOP_W);
     ui_draw_text(6, 4, UI_SCALE_HDR, UI_COL_HEADER_TXT, "Activity Log++");
     {
         char hbuf[32];
@@ -1107,27 +1151,17 @@ static void render_game_list(const PldSummary *const valid[], int n,
         ui_draw_text_right(UI_TOP_W - 6, 4, UI_SCALE_HDR, UI_COL_HEADER_TXT, hbuf);
     }
 
-    /* Status bar */
-    ui_draw_rect(0, 220, UI_TOP_W, UI_STATUS_H, UI_COL_STATUS_BG);
-    if (status_msg && status_msg[0])
-        ui_draw_text(4, 222, UI_SCALE_SM, UI_COL_STATUS_TXT, status_msg);
-    else {
-        const char *filter_label = show_unknown ? "All" :
-                                   show_system  ? "Games+Sys" : "Games";
-        ui_draw_textf(4, 222, UI_SCALE_SM, UI_COL_STATUS_TXT,
-                      "%d %s  [%s]", n,
-                      show_system ? "titles" : "games", filter_label);
-    }
-    ui_draw_text_right(396, 222, UI_SCALE_SM, UI_COL_STATUS_TXT,
-                       "L/R:sort  Y:filter  X:rank");
 }
 
 static void render_bottom_stats(const PldSummary *valid[], int n,
                                 const PldSessionLog *sessions,
-                                u32 sync_count)
+                                u32 sync_count,
+                                const char *status_msg,
+                                bool show_system, bool show_unknown,
+                                SortMode sort_mode)
 {
     /* Header */
-    ui_draw_rect(0, 0, UI_BOT_W, UI_HEADER_H, UI_COL_HEADER);
+    ui_draw_header(UI_BOT_W);
     ui_draw_text(6, 4, UI_SCALE_HDR, UI_COL_HEADER_TXT, "Statistics");
 
     /* Total playtime across all titles & find most played */
@@ -1189,10 +1223,26 @@ static void render_bottom_stats(const PldSummary *valid[], int n,
 
     /* Divider */
     ui_draw_rect(0, 180, UI_BOT_W, 1, UI_COL_DIVIDER);
+    ui_draw_grad_v(0, 181, UI_BOT_W, 2,
+                   C2D_Color32(0x00, 0x00, 0x00, 0x10), UI_COL_SHADOW_NONE);
+
+    /* Status / filter info */
+    if (status_msg && status_msg[0])
+        ui_draw_text(4, 184, UI_SCALE_SM, UI_COL_STATUS_TXT, status_msg);
+    else {
+        const char *filter_label = show_unknown ? "All" :
+                                   show_system  ? "Games+Sys" : "Games";
+        ui_draw_textf(4, 184, UI_SCALE_SM, UI_COL_STATUS_TXT,
+                      "%d %s  [%s]  Sort: %s", n,
+                      show_system ? "titles" : "games", filter_label,
+                      sort_labels[sort_mode]);
+    }
 
     /* Controls hint */
-    ui_draw_text_right(UI_BOT_W - 4, 184, UI_SCALE_SM, UI_COL_TEXT_DIM,
+    ui_draw_text_right(UI_BOT_W - 4, 198, UI_SCALE_SM, UI_COL_TEXT_DIM,
                        "A:select  START:menu  Up/Dn:scroll");
+    ui_draw_text_right(UI_BOT_W - 4, 212, UI_SCALE_SM, UI_COL_TEXT_DIM,
+                       "L/R:sort  Y:filter  X:rank");
 }
 
 /* ── Rankings rendering ─────────────────────────────────────────── */
@@ -1200,13 +1250,10 @@ static void render_bottom_stats(const PldSummary *valid[], int n,
 static void render_rankings_top(const PldSummary *ranked[], int rank_count,
                                 int rank_sel, int rank_scroll,
                                 const u32 rank_metric[], RankingsTab tab,
-                                float anim_t)
+                                float anim_t, float sel_pop)
 {
-    /* Header bar */
-    ui_draw_rect(0, 0, UI_TOP_W, UI_HEADER_H, UI_COL_HEADER);
-    ui_draw_text(6, 4, UI_SCALE_HDR, UI_COL_HEADER_TXT, "Rankings");
-    ui_draw_text_right(UI_TOP_W - 6, 4, UI_SCALE_HDR, UI_COL_HEADER_TXT,
-                       rank_tab_labels[tab]);
+    /* Darker list background */
+    ui_draw_rect(0, UI_LIST_Y, UI_TOP_W, UI_LIST_BOT - UI_LIST_Y, UI_COL_LIST_BG);
 
     /* Find max metric value for proportional bars */
     u32 max_val = 1; /* avoid div-by-zero */
@@ -1225,8 +1272,8 @@ static void render_rankings_top(const PldSummary *ranked[], int rank_count,
     char fallback[32];
     char d0_buf[12], d1_buf[12];
 
-    for (int i = rank_scroll; i < rank_scroll + UI_VISIBLE_ROWS && i < rank_count; i++) {
-        float row_y = UI_LIST_Y + (float)(i - rank_scroll) * UI_ROW_H;
+    for (int i = rank_scroll; i < rank_scroll + UI_VISIBLE_ROWS + 1 && i < rank_count; i++) {
+        float row_y = UI_LIST_Y + (float)(i - rank_scroll) * UI_ROW_PITCH;
         const PldSummary *s = ranked[i];
 
         /* Per-row cascade fade + vertical slide */
@@ -1242,13 +1289,19 @@ static void render_rankings_top(const PldSummary *ranked[], int rank_count,
         float y_off = (1.0f - reveal) * -8.0f;
         row_y += y_off;
 
-        /* Row background */
-        u32 bg = (i == rank_sel) ? UI_COL_ROW_SEL :
-                 (i % 2 == 0) ? UI_COL_BG : UI_COL_ROW_ALT;
-        ui_draw_rect(0, row_y, UI_TOP_W, UI_ROW_H,
-                     (bg & 0x00FFFFFF) | ((u32)alpha << 24));
+        /* Selection pop: grow row and intensify shadow */
+        bool selected = (i == rank_sel);
+        float pop = selected ? sel_pop : 0.0f;
+        float grow = pop * 4.0f;
+        row_y -= grow * 0.5f;
+        float row_h = (float)UI_ROW_H + grow;
 
-        /* Proportional bar (semi-transparent blue behind row) */
+        /* Full-row dimensions (icon + gap + card) */
+        float row_x = (float)UI_ROW_MARGIN;
+        float row_w = (float)(UI_TOP_W - 2 * UI_ROW_MARGIN);
+        float card_r = (float)UI_ROW_RADIUS;
+
+        /* Proportional bar (full-width rounded, drawn behind everything) */
         u32 val = 0;
         switch (tab) {
             case RANK_PLAYTIME:    val = s->total_secs;       break;
@@ -1257,29 +1310,35 @@ static void render_rankings_top(const PldSummary *ranked[], int rank_count,
             case RANK_RECENT:      val = s->last_played_days; break;
             default: break;
         }
-        float bar_max_w = UI_TOP_W - 4.0f;
+        float bar_max_w = row_w;
         float bar_w = bar_max_w * ((float)val / (float)max_val);
         if (bar_w < 2.0f) bar_w = 2.0f;
         u8 bar_base_alpha = 0x30;
         u8 bar_alpha = (u8)((u32)bar_base_alpha * alpha / 255);
         u32 bar_col = C2D_Color32(0x4A, 0x86, 0xC8, bar_alpha);
-        ui_draw_rect(2.0f, row_y + 1.0f, bar_w, UI_ROW_H - 2.0f, bar_col);
+        ui_draw_rounded_rect(row_x, row_y, bar_w, row_h, card_r, bar_col);
 
-        u32 text_col     = (UI_COL_TEXT     & 0x00FFFFFF) | ((u32)alpha << 24);
-        u32 text_dim_col = (UI_COL_TEXT_DIM & 0x00FFFFFF) | ((u32)alpha << 24);
+        /* Shadow intensity: animated for selected rows */
+        u8 sh_base = (u8)(0x38 + (u32)(pop * (0x70 - 0x38)));
+        u8 sh_alpha = (u8)((u32)sh_base * alpha / 255);
 
-        /* Rank number */
-        char rank_num[16];
-        snprintf(rank_num, sizeof(rank_num), "#%d", i + 1);
-        ui_draw_text(4.0f, row_y + 16.0f, UI_SCALE_SM, text_dim_col, rank_num);
-
-        /* Icon */
+        /* Icon — standalone, left-aligned outside the card */
+        float icon_sz = (float)ICON_DRAW_SIZE + grow;
+        float rank_icon_x = (float)UI_ROW_MARGIN - grow * 0.5f;
+        float icon_y = row_y;
+        float icon_r = (float)UI_ROW_RADIUS;
         C2D_Image icon;
+
+        /* Icon drop shadow */
+        ui_draw_drop_shadow(rank_icon_x, icon_y, icon_sz, icon_sz, icon_r, sh_alpha);
+
         if (title_icon_get(s->title_id, &icon)) {
             if (alpha == 255)
-                ui_draw_image(icon, 28.0f, row_y, ICON_DRAW_SIZE);
+                ui_draw_image(icon, rank_icon_x, icon_y, icon_sz);
             else
-                ui_draw_image_alpha(icon, 28.0f, row_y, ICON_DRAW_SIZE, alpha);
+                ui_draw_image_alpha(icon, rank_icon_x, icon_y, icon_sz, alpha);
+            ui_draw_rounded_mask(rank_icon_x, icon_y, icon_sz, icon_sz,
+                                 icon_r, UI_COL_LIST_BG);
         } else {
             const char *name_tmp = title_name_lookup(s->title_id);
             if (!name_tmp) name_tmp = title_db_lookup(s->title_id);
@@ -1295,11 +1354,39 @@ static void render_rankings_top(const PldSummary *ranked[], int rank_count,
                 C2D_Color32(0xC8, 0x4A, 0x4A, 0xFF),
             };
             u32 icon_col = kIconColors[(s->title_id >> 8) % 8];
-            ui_draw_rect(28.0f, row_y, (float)ICON_DRAW_SIZE, (float)ICON_DRAW_SIZE,
-                         (icon_col & 0x00FFFFFF) | ((u32)alpha << 24));
-            ui_draw_text(40.0f, row_y + 14.0f, UI_SCALE_LG,
+            ui_draw_rounded_rect(rank_icon_x, icon_y, icon_sz, icon_sz, icon_r,
+                                 (icon_col & 0x00FFFFFF) | ((u32)alpha << 24));
+            ui_draw_text(rank_icon_x + 12.0f, icon_y + 14.0f, UI_SCALE_LG,
                          (0xFFFFFFFF & 0x00FFFFFF) | ((u32)alpha << 24), letter);
         }
+
+        /* Card — to the right of the icon */
+        float card_x = (float)(UI_ROW_MARGIN + ICON_DRAW_SIZE + UI_ICON_GAP);
+        float card_w = (float)(UI_TOP_W - UI_ROW_MARGIN) - card_x;
+
+        /* Card drop shadow */
+        ui_draw_drop_shadow(card_x, row_y, card_w, row_h, card_r, sh_alpha);
+
+        if (selected) {
+            ui_draw_rounded_rect(card_x - 1, row_y - 1, card_w + 2, row_h + 2,
+                                 card_r + 1,
+                                 (UI_COL_SEL_BORDER & 0x00FFFFFF) | ((u32)alpha << 24));
+            ui_draw_rounded_rect(card_x, row_y, card_w, row_h, card_r,
+                                 (UI_COL_ROW_SEL & 0x00FFFFFF) | ((u32)alpha << 24));
+        } else {
+            ui_draw_rounded_rect(card_x, row_y, card_w, row_h, card_r,
+                                 (UI_COL_CARD & 0x00FFFFFF) | ((u32)alpha << 24));
+        }
+
+        u32 text_col     = (UI_COL_TEXT     & 0x00FFFFFF) | ((u32)alpha << 24);
+        u32 text_dim_col = (UI_COL_TEXT_DIM & 0x00FFFFFF) | ((u32)alpha << 24);
+        float text_x = card_x + 6.0f;
+        float text_r = (float)(UI_TOP_W - UI_ROW_MARGIN) - 6.0f;
+
+        /* Rank number */
+        char rank_num[16];
+        snprintf(rank_num, sizeof(rank_num), "#%d", i + 1);
+        ui_draw_text(text_x, row_y + 16.0f, UI_SCALE_SM, text_dim_col, rank_num);
 
         /* Name */
         const char *name = title_name_lookup(s->title_id);
@@ -1309,7 +1396,7 @@ static void render_rankings_top(const PldSummary *ranked[], int rank_count,
                      (unsigned long long)s->title_id);
             name = fallback;
         }
-        ui_draw_text(82.0f, row_y + 8, UI_SCALE_LG, text_col, name);
+        ui_draw_text(text_x + 30.0f, row_y + 8, UI_SCALE_LG, text_col, name);
 
         /* Metric value right-aligned */
         char metric[24];
@@ -1330,7 +1417,7 @@ static void render_rankings_top(const PldSummary *ranked[], int rank_count,
                 metric[0] = '\0';
                 break;
         }
-        ui_draw_text_right(394, row_y + 8, UI_SCALE_LG, text_dim_col, metric);
+        ui_draw_text_right(text_r, row_y + 8, UI_SCALE_LG, text_dim_col, metric);
 
         /* Secondary line */
         {
@@ -1338,7 +1425,7 @@ static void render_rankings_top(const PldSummary *ranked[], int rank_count,
             pld_fmt_time(rank_metric[i], avg_buf, sizeof(avg_buf));
             pld_fmt_date(s->first_played_days, d0_buf, sizeof(d0_buf));
             pld_fmt_date(s->last_played_days,  d1_buf, sizeof(d1_buf));
-            ui_draw_textf(82.0f, row_y + 28, UI_SCALE_SM, text_dim_col,
+            ui_draw_textf(text_x + 30.0f, row_y + 28, UI_SCALE_SM, text_dim_col,
                           "L:%u  Avg:%s  %s-%s",
                           (unsigned)s->launch_count, avg_buf, d0_buf, d1_buf);
         }
@@ -1349,17 +1436,18 @@ static void render_rankings_top(const PldSummary *ranked[], int rank_count,
         ui_draw_text(8, 36, UI_SCALE_LG, UI_COL_TEXT_DIM, "No titles to rank");
     }
 
-    /* Status bar */
-    ui_draw_rect(0, 220, UI_TOP_W, UI_STATUS_H, UI_COL_STATUS_BG);
-    ui_draw_text_right(396, 222, UI_SCALE_SM, UI_COL_STATUS_TXT,
-                       "L/R:tab  A:detail  B:back");
+    /* Header bar (drawn after rows so it covers any partial overlap) */
+    ui_draw_header(UI_TOP_W);
+    ui_draw_text(6, 4, UI_SCALE_HDR, UI_COL_HEADER_TXT, "Rankings");
+    ui_draw_text_right(UI_TOP_W - 6, 4, UI_SCALE_HDR, UI_COL_HEADER_TXT,
+                       rank_tab_labels[tab]);
 }
 
 static void render_rankings_bot(const PldSummary *ranked[], int rank_count,
                                 const u32 rank_metric[], RankingsTab tab)
 {
     /* Header */
-    ui_draw_rect(0, 0, UI_BOT_W, UI_HEADER_H, UI_COL_HEADER);
+    ui_draw_header(UI_BOT_W);
     ui_draw_text(6, 4, UI_SCALE_HDR, UI_COL_HEADER_TXT, "Rankings");
 
     /* Aggregate stats for top N */
@@ -1398,6 +1486,8 @@ static void render_rankings_bot(const PldSummary *ranked[], int rank_count,
 
     /* Divider */
     ui_draw_rect(0, 180, UI_BOT_W, 1, UI_COL_DIVIDER);
+    ui_draw_grad_v(0, 181, UI_BOT_W, 2,
+                   C2D_Color32(0x00, 0x00, 0x00, 0x10), UI_COL_SHADOW_NONE);
 
     /* Controls hint */
     ui_draw_text_right(UI_BOT_W - 4, 184, UI_SCALE_SM, UI_COL_TEXT_DIM,
@@ -1419,7 +1509,7 @@ static void render_detail_top(const PldSummary *s, const char *name,
     ui_draw_rect(0, 0, UI_TOP_W, UI_TOP_H, UI_COL_BG);
 
     /* Header bar */
-    ui_draw_rect(0, 0, UI_TOP_W, UI_HEADER_H, UI_COL_HEADER);
+    ui_draw_header(UI_TOP_W);
     ui_draw_text(6, 4, UI_SCALE_HDR, UI_COL_HEADER_TXT, name);
 
     /* Icon (120×120) at left */
@@ -1489,6 +1579,8 @@ static void render_detail_top(const PldSummary *s, const char *name,
 
     /* Divider */
     ui_draw_rect(0, 152, UI_TOP_W, 1, UI_COL_DIVIDER);
+    ui_draw_grad_v(0, 153, UI_TOP_W, 2,
+                   C2D_Color32(0x00, 0x00, 0x00, 0x10), UI_COL_SHADOW_NONE);
 
     /* Column headers */
     ui_draw_text(6, 155, UI_SCALE_SM, UI_COL_TEXT_DIM, "Date/Time");
@@ -1521,7 +1613,7 @@ static void render_detail_top(const PldSummary *s, const char *name,
 
 static void render_detail_bot(void)
 {
-    ui_draw_rect(0, 0, UI_BOT_W, UI_HEADER_H, UI_COL_HEADER);
+    ui_draw_header(UI_BOT_W);
     ui_draw_text(6, 4, UI_SCALE_HDR, UI_COL_HEADER_TXT, "Game Details");
     ui_draw_text_right(UI_BOT_W - 8, 36, UI_SCALE_LG, UI_COL_TEXT_DIM, "Up/Dn:scroll  B:back");
 }
@@ -1957,6 +2049,8 @@ int main(void)
                      icon_fetch_work, &if_args);
 
     int sel        = 0;   /* currently highlighted entry index */
+    int prev_sel   = -1;  /* previous sel for pop animation     */
+    float sel_pop  = 0.0f;/* selection pop animation 0→1        */
     int scroll_top = 0;   /* index of first visible row        */
     float scroll_y = 0.0f; /* smooth scroll pixel offset        */
 
@@ -1979,8 +2073,10 @@ int main(void)
     /* Rankings state */
     bool rankings_view = false;
     RankingsTab rank_tab = RANK_PLAYTIME;
-    int  rank_sel    = 0;
-    int  rank_scroll = 0;
+    int  rank_sel      = 0;
+    int  prev_rank_sel = -1;
+    float rank_sel_pop = 0.0f;
+    int  rank_scroll   = 0;
     const PldSummary *ranked[RANK_MAX];
     u32  rank_metric[RANK_MAX];
     int  rank_count  = 0;
@@ -2117,6 +2213,10 @@ int main(void)
             }
 
             /* Render rankings */
+            if (rank_sel != prev_rank_sel) { rank_sel_pop = 0.0f; prev_rank_sel = rank_sel; }
+            rank_sel_pop = lerpf(rank_sel_pop, 1.0f, 0.25f);
+            if (rank_sel_pop > 0.99f) rank_sel_pop = 1.0f;
+
             float rank_anim_t = (float)rank_anim_frame / 40.0f;
             if (rank_anim_t > 2.0f) rank_anim_t = 2.0f;
             rank_anim_frame++;
@@ -2124,7 +2224,8 @@ int main(void)
             ui_begin_frame();
             ui_target_top();
             render_rankings_top(ranked, rank_count, rank_sel, rank_scroll,
-                                rank_metric, rank_tab, rank_anim_t);
+                                rank_metric, rank_tab, rank_anim_t,
+                                rank_sel_pop);
             ui_target_bot();
             render_rankings_bot(ranked, rank_count, rank_metric, rank_tab);
             ui_end_frame();
@@ -2259,7 +2360,7 @@ int main(void)
                                     if (!chooser_done) {
                                         ui_begin_frame();
                                         ui_target_top();
-                                        ui_draw_rect(0, 0, UI_TOP_W, UI_HEADER_H, UI_COL_HEADER);
+                                        ui_draw_header(UI_TOP_W);
                                         ui_draw_text(6, 4, UI_SCALE_HDR, UI_COL_HEADER_TXT,
                                                      "Restore from Backup");
                                         ui_draw_text(6, 28, UI_SCALE_SM, UI_COL_TEXT_DIM,
@@ -2275,7 +2376,7 @@ int main(void)
                                                           "%s  %d apps", label, app_counts[i]);
                                         }
                                         ui_target_bot();
-                                        ui_draw_rect(0, 0, UI_BOT_W, UI_HEADER_H, UI_COL_HEADER);
+                                        ui_draw_header(UI_BOT_W);
                                         ui_draw_text(6, 4, UI_SCALE_HDR, UI_COL_HEADER_TXT,
                                                      "Activity Log++");
                                         ui_end_frame();
@@ -2466,10 +2567,15 @@ int main(void)
 
         if (!charts_view && !rankings_view) {
             /* Smooth scroll interpolation */
-            float scroll_target = (float)scroll_top * UI_ROW_H;
+            float scroll_target = (float)scroll_top * UI_ROW_PITCH;
             scroll_y = lerpf(scroll_y, scroll_target, 0.3f);
             if (scroll_y - scroll_target < 0.5f && scroll_y - scroll_target > -0.5f)
                 scroll_y = scroll_target;
+
+            /* Selection pop animation */
+            if (sel != prev_sel) { sel_pop = 0.0f; prev_sel = sel; }
+            sel_pop = lerpf(sel_pop, 1.0f, 0.25f);
+            if (sel_pop > 0.99f) sel_pop = 1.0f;
 
             float list_anim_t = (float)list_anim_frame / 40.0f;
             if (list_anim_t > 2.0f) list_anim_t = 2.0f;
@@ -2478,10 +2584,13 @@ int main(void)
             ui_begin_frame();
             ui_target_top();
             render_game_list(valid, n, sel, scroll_y, &sessions, status_msg,
-                             show_system, show_unknown, sort_mode, list_anim_t);
+                             show_system, show_unknown, sort_mode, list_anim_t,
+                             sel_pop);
             if (menu_open) render_menu(menu_sel);
             ui_target_bot();
-            render_bottom_stats(valid, n, &sessions, sync_count);
+            render_bottom_stats(valid, n, &sessions, sync_count,
+                                status_msg, show_system, show_unknown,
+                                sort_mode);
             ui_end_frame();
         }
     }
