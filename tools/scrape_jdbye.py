@@ -6,9 +6,11 @@ compatible with gen_title_db.py.
 Usage:
     python tools/scrape_jdbye.py [-o tools/jdbye.json]
 
-Then regenerate the title DB:
-    python tools/gen_title_db.py tools/system_apps.json tools/jdbye.json \
-        tools/list_US.json tools/list_GB.json tools/list_JP.json tools/list_KR.json
+Then regenerate the title DB (jdbye.json listed last as a fallback for
+titles not covered by the primary list_*.json sources):
+    python tools/gen_title_db.py tools/system_apps.json \
+        tools/list_US.json tools/list_GB.json tools/list_JP.json tools/list_KR.json \
+        tools/jdbye.json
 """
 
 import argparse

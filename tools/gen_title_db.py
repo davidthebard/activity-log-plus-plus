@@ -14,7 +14,12 @@ Recommended sources (https://github.com/hax0kartik/3dsdb):
     curl -L -o list_JP.json "https://raw.githubusercontent.com/hax0kartik/3dsdb/master/jsons/list_JP.json"
     curl -L -o list_KR.json "https://raw.githubusercontent.com/hax0kartik/3dsdb/master/jsons/list_KR.json"
 
-    python tools/gen_title_db.py list_US.json list_GB.json list_JP.json list_KR.json
+    python tools/gen_title_db.py tools/system_apps.json \
+        tools/list_US.json tools/list_GB.json tools/list_JP.json tools/list_KR.json \
+        tools/jdbye.json
+
+jdbye.json is a fallback source scraped from 3ds.jdbye.com. It should be
+listed last so the primary list_*.json files take priority on duplicates.
 
 Supported input formats:
 
