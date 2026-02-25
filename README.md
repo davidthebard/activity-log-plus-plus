@@ -34,7 +34,7 @@ Activity Log++ reads this data from NAND (read-only), merges it with data from o
 
 ## Controls
 
-The main screen uses a **unified view mode**: L/R cycles through both sort orders (list view) and ranking types (top-10 view). Modes are: Last Played, Playtime, Launches, Avg Session, First Played, Name. Playtime, Launches, and Avg Session show the rankings view; the others show the full sorted list.
+The main screen uses a **unified view mode**: L/R cycles through both sort orders (list view) and ranking types (top-10 view). Modes are: Last Played, Playtime, Launches, Avg Session, First Played, Name. Playtime, Launches, and Avg Session show the rankings view (top 10 games according to the applied ranking); the others show the full sorted list.
 
 | Button | List / Rankings | Detail View | Charts |
 |--------|-----------------|-------------|--------|
@@ -43,7 +43,7 @@ The main screen uses a **unified view mode**: L/R cycles through both sort order
 | B | — | Back to list | Back |
 | Y | Cycle filter (Games / Games+Sys / All) | — | — |
 | L/R | Cycle view mode (sort or ranking type) | — | Cycle tab (pie / bar) |
-| START | Open menu (Charts, Sync, Backup, Export, Reset, Quit) | — | — |
+| START | Open menu (Charts, Sync, Backup, Export, Restore, Reset, Quit) | — | — |
 
 ## Building
 
