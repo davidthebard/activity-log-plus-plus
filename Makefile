@@ -114,9 +114,15 @@ $(BUILD):
 	@[ -d $@ ] || mkdir -p $@
 	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
 
+cia: $(BUILD)
+	@bannertool makebanner -i $(TOPDIR)/banner.png -a $(TOPDIR)/banner_silent.wav -o $(BUILD)/banner.bnr
+	@bannertool makesmdh -i $(APP_ICON) -s "$(APP_TITLE)" -l "$(APP_DESCRIPTION)" -p "$(APP_AUTHOR)" -o $(BUILD)/icon.icn
+	@makerom -f cia -target t -exefslogo -o $(TARGET).cia -elf $(TARGET).elf \
+		-rsf $(TOPDIR)/app.rsf -icon $(BUILD)/icon.icn -banner $(BUILD)/banner.bnr
+
 clean:
 	@echo clean ...
-	@rm -fr $(BUILD) $(TARGET).3dsx $(OUTPUT).smdh $(TARGET).elf
+	@rm -fr $(BUILD) $(TARGET).3dsx $(OUTPUT).smdh $(TARGET).elf $(TARGET).cia
 
 #---------------------------------------------------------------------------------
 else
